@@ -4616,7 +4616,7 @@ def sample_images_common(
                 # log generation information to wandb
                 wandb_tracker.log(
                     {
-                        f"'prompt: ' + prompt + '\n' + 'negative_prompt: ' + negative_prompt + '\n' + 'seed: ' + str(seed) \n sample_{i}": wandb.Image(image)
+                        f"prompt : {prompt} seed: {str(seed)}": wandb.Image(image, caption=f"negative_prompt: {negative_prompt}"),
                     }
                 )
             except:  # wandb 無効時
