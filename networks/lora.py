@@ -15,8 +15,15 @@ import re
 
 RE_UPDOWN = re.compile(r"(up|down)_blocks_(\d+)_(resnets|upsamplers|downsamplers|attentions)_(\d+)_")
 
-RE_UPDOWN = re.compile(r"(up|down)_blocks_(\d+)_(resnets|upsamplers|downsamplers|attentions)_(\d+)_")
 
+BLOCKS = ["text_model",
+          "unet_down_blocks_0_attentions_0","unet_down_blocks_0_attentions_1",
+          "unet_down_blocks_1_attentions_0","unet_down_blocks_1_attentions_1",
+          "unet_down_blocks_2_attentions_0","unet_down_blocks_2_attentions_1",
+          "unet_mid_block_attentions_0",
+          "unet_up_blocks_1_attentions_0","unet_up_blocks_1_attentions_1","unet_up_blocks_1_attentions_2",
+          "unet_up_blocks_2_attentions_0","unet_up_blocks_2_attentions_1","unet_up_blocks_2_attentions_2",
+          "unet_up_blocks_3_attentions_0","unet_up_blocks_3_attentions_1","unet_up_blocks_3_attentions_2", ]
 
 class LoRAModule(torch.nn.Module):
     """
@@ -41,9 +48,11 @@ class LoRAModule(torch.nn.Module):
         if org_module.__class__.__name__ == "Conv2d":
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
+            self.is_linear = False
         else:
             in_dim = org_module.in_features
             out_dim = org_module.out_features
+            self.is_linear = True
 
         # if limit_rank:
         #   self.lora_dim = min(lora_dim, in_dim, out_dim)
@@ -77,6 +86,7 @@ class LoRAModule(torch.nn.Module):
         self.dropout = dropout
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
+        self.org_weight = self.org_module.weight
 
     def apply_to(self):
         self.org_forward = self.org_module.forward
@@ -183,6 +193,7 @@ class LoRAInfModule(LoRAModule):
             weight = weight + self.multiplier * conved * self.scale
 
         # set weight to org_module
+        print(f'origin + lora weight : {weight.shape}')
         org_sd["weight"] = weight.to(dtype)
         self.org_module.load_state_dict(org_sd)
 
@@ -416,6 +427,7 @@ def create_network(
     vae: AutoencoderKL,
     text_encoder: Union[CLIPTextModel, List[CLIPTextModel]],
     unet,
+    block_wise,
     neuron_dropout: Optional[float] = None,
     **kwargs,
 ):
@@ -470,6 +482,7 @@ def create_network(
     network = LoRANetwork(
         text_encoder,
         unet,
+        block_wise=block_wise,
         multiplier=multiplier,
         lora_dim=network_dim,
         alpha=network_alpha,
@@ -691,7 +704,7 @@ def get_block_index(lora_name: str) -> int:
 
 
 # Create network from weights for inference, weights are not loaded here (because can be merged)
-def create_network_from_weights(multiplier, file, vae, text_encoder, unet, weights_sd=None, for_inference=False, **kwargs):
+def create_network_from_weights(multiplier, file, block_wise, vae, text_encoder, unet, weights_sd=None, for_inference=False, **kwargs):
     if weights_sd is None:
         if os.path.splitext(file)[1] == ".safetensors":
             from safetensors.torch import load_file, safe_open
@@ -721,10 +734,10 @@ def create_network_from_weights(multiplier, file, vae, text_encoder, unet, weigh
             modules_alpha[key] = modules_dim[key]
 
     module_class = LoRAInfModule if for_inference else LoRAModule
-
-    network = LoRANetwork(
-        text_encoder, unet, multiplier=multiplier, modules_dim=modules_dim, modules_alpha=modules_alpha, module_class=module_class
-    )
+    print(f'module_class : {module_class.__class__.__name__}')
+    network = LoRANetwork(text_encoder, unet,
+                          block_wise=block_wise,
+                          multiplier=multiplier, modules_dim=modules_dim, modules_alpha=modules_alpha, module_class=module_class)
 
     # block lr
     down_lr_weight, mid_lr_weight, up_lr_weight = parse_block_lr_kwargs(kwargs)
@@ -751,6 +764,7 @@ class LoRANetwork(torch.nn.Module):
         self,
         text_encoder: Union[List[CLIPTextModel], CLIPTextModel],
         unet,
+        block_wise,
         multiplier: float = 1.0,
         lora_dim: int = 4,
         alpha: float = 1,
@@ -777,6 +791,7 @@ class LoRANetwork(torch.nn.Module):
         5. modules_dimとmodules_alphaを指定 (推論用)
         """
         super().__init__()
+        self.block_wise = block_wise
         self.multiplier = multiplier
 
         self.lora_dim = lora_dim
@@ -863,18 +878,21 @@ class LoRANetwork(torch.nn.Module):
                                 if is_linear or is_conv2d_1x1 or (self.conv_lora_dim is not None or conv_block_dims is not None):
                                     skipped.append(lora_name)
                                 continue
-
-                            lora = module_class(
-                                lora_name,
-                                child_module,
-                                self.multiplier,
-                                dim,
-                                alpha,
-                                dropout=dropout,
-                                rank_dropout=rank_dropout,
-                                module_dropout=module_dropout,
-                            )
-                            loras.append(lora)
+                            for i, block in enumerate(BLOCKS):
+                                if block in lora_name:
+                                    training_option = self.block_wise[i]
+                                    if training_option == 1:
+                                        lora = module_class(
+                                            lora_name,
+                                            child_module,
+                                            self.multiplier,
+                                            dim,
+                                            alpha,
+                                            dropout=dropout,
+                                            rank_dropout=rank_dropout,
+                                            module_dropout=module_dropout,
+                                        )
+                                        loras.append(lora)
             return loras, skipped
 
         text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]
@@ -965,17 +983,14 @@ class LoRANetwork(torch.nn.Module):
                 apply_text_encoder = True
             elif key.startswith(LoRANetwork.LORA_PREFIX_UNET):
                 apply_unet = True
-
         if apply_text_encoder:
             print("enable LoRA for text encoder")
         else:
             self.text_encoder_loras = []
-
         if apply_unet:
             print("enable LoRA for U-Net")
         else:
             self.unet_loras = []
-
         for lora in self.text_encoder_loras + self.unet_loras:
             sd_for_lora = {}
             for key in weights_sd.keys():
@@ -1078,19 +1093,19 @@ class LoRANetwork(torch.nn.Module):
     def save_weights(self, file, dtype, metadata):
         if metadata is not None and len(metadata) == 0:
             metadata = None
-
         state_dict = self.state_dict()
 
-        if dtype is not None:
-            for key in list(state_dict.keys()):
-                v = state_dict[key]
-                v = v.detach().clone().to("cpu").to(dtype)
-                state_dict[key] = v
+        #if dtype is not None:
+        for key in list(state_dict.keys()):
+            v = state_dict[key]
+            v = v.detach().clone().to("cpu")
+            if dtype is not None:
+                v =v.to(dtype)
+            state_dict[key] = v
 
         if os.path.splitext(file)[1] == ".safetensors":
             from safetensors.torch import save_file
             from library import train_util
-
             # Precalculate model hashes to save time on indexing
             if metadata is None:
                 metadata = {}
