@@ -297,7 +297,7 @@ def main():
   # call .\venv\Scripts\activate.bat
   # set PATH=%PATH%;%~dp0venv\Lib\site-packages\torch\lib
     # windows, required user venv..
-  command_list = ["accelerate", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
+  command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
   with open(os.path.join(log_folder, "accelerate_launch_commands_log.txt"), "a") as f:
     f.write(" ".join(command_list))
     
@@ -518,6 +518,11 @@ def add_logging_args(parser: argparse.ArgumentParser) -> List[str]:
   #log_tracker_config : path to config file, default : None
   parser.add_argument('--log_tracker_config', type=str, default='none', help='Log tracker config for the project (default: "none")')
   return ['log_with', 'wandb_api_key', 'log_tracker_config']
+
+def add_env_args(parser: argparse.ArgumentParser) -> List[str]:
+  # env : 'accelerate'
+  parser.add_argument('--accelerate', type=str, default='accelerate', help='Accelerate for the project (default: "accelerate")')
+  return []
       
 if __name__ == "__main__":
   extra_args = []
@@ -532,6 +537,7 @@ if __name__ == "__main__":
   extra_args.extend(add_extra_args(parser)) # seed, keep_tokens, resolution, clip_skip 
   extra_args.extend(add_optimizer_args(parser)) # betas, eps, weight_decay
   extra_args.extend(add_logging_args(parser)) # log_with, wandb_api_key
+  extra_args.extend(add_env_args(parser)) # accelerate
   # keep tokens should be used only if first tags(comma separated) are properly tagged and set up in dataset.
 
   args = parser.parse_args()
@@ -566,6 +572,7 @@ if __name__ == "__main__":
   os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
   if args.target_path != '':
     print("Target path will be used as "+args.target_path)
+  accelerate_executable_path = args.accelerate
   project_name_base = args.project_name_base
   model_file = args.model_file
   optimizer = args.optimizer

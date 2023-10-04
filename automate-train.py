@@ -241,9 +241,11 @@ if __name__ == '__main__':
     images_folder = args.images_folder
     cuda_device = args.cuda_device
     venv_path = args.venv_path
+    accelerate_path = 'accelerate' # default path
     # handling venv
     if venv_path != '':
         execute_path = os.path.join(venv_path, 'bin', 'python')
+        accelerate_path = os.path.join(venv_path, 'bin', 'accelerate')
     else:
         if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
             execute_path = sys.executable # get path of python executable
@@ -260,6 +262,8 @@ if __name__ == '__main__':
                 #subprocess.check_call(["call", os.path.abspath(".\\venv\\Scripts\\activate.bat")], shell=True)
             else: # posix
                 execute_path = os.path.join(venv_path, 'bin', 'python')
+                accelerate_path = os.path.join(venv_path, 'bin', 'accelerate')
+                
     print(f"using python executable at {execute_path}")
     train_id = args.train_id_start
     default_configs = load_default_config(args.default_config_path)
@@ -337,6 +341,9 @@ if __name__ == '__main__':
             command_inputs.append(str(values))
         command_inputs.append("--custom_suffix")
         command_inputs.append(str(train_id))
+        # add accelerate path
+        command_inputs.append("--accelerate")
+        command_inputs.append(accelerate_path)
         if debug:
             print(' '.join(command_inputs) + '\n')
         else:
