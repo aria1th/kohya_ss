@@ -11,8 +11,8 @@ import numpy as np
 from accelerate import Accelerator
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
-from webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
-from webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
+from library.webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
+from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
 
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
     
