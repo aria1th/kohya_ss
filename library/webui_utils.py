@@ -138,7 +138,7 @@ def request_sample(
         accelerator:Accelerator,
         webui_instance:WebUIApi,
         ckpt_name:str=""
-    ):
+    ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. This function is thread-locking. 
     Prompt file should be a json file that can be parsed for webuiapi.
@@ -156,6 +156,7 @@ def request_sample(
     if not isinstance(prompts, list):
         prompts = [prompts] # convert to list if not list
     os.makedirs(output_dir_path, exist_ok=True)
+    any_success = False
     for i, prompt in enumerate(prompts):
         if not isinstance(prompt, dict):
             print(f"Invalid prompt format. Must be a dict, got {prompt}")
@@ -227,3 +228,8 @@ def request_sample(
             log_wandb(accelerator, image, positive_prompt, negative_prompt, seed)
         # start thread
         executor_thread_pool.submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
+        any_success = True
+    if not any_success:
+        return False, "No valid prompts found"
+    return True, ""
+        
