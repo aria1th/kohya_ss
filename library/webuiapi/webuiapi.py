@@ -624,18 +624,19 @@ class WebUIApi:
             data["path"] = dynamic_prompts_target_path
         return self.session.post(target_url, files=files, data=data)
     
-    def check_uploader_ping(self, target_api_address:str):
+    def check_uploader_ping(self, target_api_address:str = ""):
         """
         Checks if target_api_address is running uploader
         
-        @param target_api_address: address of target api
+        @param target_api_address: address of target api or empty string to check self
         
         @throws RuntimeError if target_api_address is not running uploader
         """
         # ping /uploader/ping to check if uploader is running
         target_api_ping_url = target_api_address + "/uploader/ping"
         if target_api_address == "":
-            raise RuntimeError("target_api_address must be specified")
+            # check self
+            target_api_ping_url = self.real_url + "/uploader/ping"
         result = self.session.get(target_api_ping_url)
         # check response
         if result.status_code != 200:
