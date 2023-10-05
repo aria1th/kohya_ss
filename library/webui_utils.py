@@ -180,8 +180,12 @@ def request_sample(
             print(f"Invalid prompt format. Must include regex_to_replace, got {prompt}")
             continue
         # replace regex_to_replace with ckpt_name, search in prompt and negative prompt
+        if "prompt" not in prompt:
+            print(f"Invalid prompt format. Must include prompt, got {prompt}")
+            continue
         prompt["prompt"] = prompt["prompt"].replace(prompt["regex_to_replace"], ckpt_name)
-        prompt["negative_prompt"] = prompt["negative_prompt"].replace(prompt["regex_to_replace"], ckpt_name)
+        if "negative_prompt" in prompt: # well this is optional but suggested
+            prompt["negative_prompt"] = prompt["negative_prompt"].replace(prompt["regex_to_replace"], ckpt_name)
         # pop regex_to_replace
         prompt.pop("regex_to_replace")
         # pop controlnet params
