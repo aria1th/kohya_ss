@@ -68,7 +68,7 @@ def sample_images_external_webui(
         webui_instance,
         ckpt_name=ckpt_name
     )
-    remove_ckpt(webui_instance, abs_ckpt_path)
+    remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload)
     pass # TODO
 
 def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
@@ -198,12 +198,13 @@ def request_sample(
         # fix alwayson_script args if there is any 'file' references as strings
         if 'alwayson_scripts' in prompt:
             alwayson_scripts_dict = prompt['alwayson_scripts']
-            for key, value in alwayson_scripts_dict.items():
-                if isinstance(value, str) and os.path.isfile(value):
-                    # convert to base64
-                    base64_str = raw_b64_img(open_mask_image(value))
-                    alwayson_scripts_dict[key] = base64_str
-                    print(f"Converted {value} to base64 string")
+            for key, dictvalue in alwayson_scripts_dict.items():
+                for _key, value in dictvalue.items():
+                    if isinstance(value, str) and os.path.isfile(value):
+                        # convert to base64
+                        base64_str = raw_b64_img(open_mask_image(value))
+                        alwayson_scripts_dict[key][_key] = base64_str
+                        print(f"Converted {value} to base64 string")
         positive_prompt, negative_prompt, seed = prompt.get("positive_prompt", "positive:None"), prompt.get("negative_prompt", "negative:None"), prompt.get("seed", 0)
         queued_task_result = webui_instance.txt2img_task(
             controlnet_units=controlnet_units,
