@@ -47,7 +47,7 @@ def sample_images_external_webui(
             print(f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}")
             return False
         webui_instance.set_auth(*webui_auth.split(':'))
-    ping_response = ping_webui(webui_url)
+    ping_response = ping_webui(webui_instance)
     if ping_response is None:
         print(f"WebUI at {webui_url} is not reachable")
         return False
