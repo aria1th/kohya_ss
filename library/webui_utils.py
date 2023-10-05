@@ -28,14 +28,13 @@ def sample_images_external_webui(
         webui_url:str,
         webui_auth:str=None,
         abs_ckpt_path:str=""
-    ) -> bool:
+    ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
     """
     # prompt file path can be .json file for webui
     if not prompt_file_path.endswith(".json"):
-        print(f"Invalid prompt file path. Must end with .json, got {prompt_file_path}")
-        return False
+        return False, f"Invalid prompt file path. Must end with .json, got {prompt_file_path}"
     if not webui_url.endswith('/sdapi/v1'):
         # first split by /, then remove last element, then join back
         if webui_url.endswith('/'):
@@ -44,23 +43,23 @@ def sample_images_external_webui(
     webui_instance = WebUIApi(baseurl=webui_url)
     if webui_auth and ':' in webui_auth:
         if len(webui_auth.split(':')) != 2:
-            print(f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}")
-            return False
+            return False, f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}"
         webui_instance.set_auth(*webui_auth.split(':'))
     ping_response = ping_webui(webui_instance)
     if ping_response is None:
-        print(f"WebUI at {webui_url} is not reachable")
-        return False
+        return False, f"WebUI at {webui_url} is not reachable"
     # now upload, request samples, and download results, then remove uploaded files
     
     ckpt_name_to_upload = str(uuid.uuid4()) # generate random uuid for checkpoint name
     # the following function calls are thread-blocking so it is called and queued in a thread
-    upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload)
+    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload)
+    if not upload_success:
+        return False, message
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
     # remove extension
     if '.' in ckpt_name:
         ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
-    request_sample(
+    sample_success, msg = request_sample(
         prompt_file_path,
         output_dir_path,
         output_name,
@@ -68,28 +67,31 @@ def sample_images_external_webui(
         webui_instance,
         ckpt_name=ckpt_name
     )
-    remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload)
-    pass # TODO
+    if not sample_success:
+        return False, msg
+    remove_success, msg = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload)
+    if not remove_success:
+        return True, msg # still return true if remove failed
+    return True, ""
 
-def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
+def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
     """
     Upload checkpoint to webui. Returns true if upload was successful. Returns False if webui was not reachable.
     """
     response = webui_instance.upload_lora(ckpt_name, ckpt_name_to_upload) # uploaded to ckpt_name_to_upload/ckpt_name
     if response is None or response.status_code != 200:
         print(f"Failed to upload checkpoint {ckpt_name} to webui")
-        return False
-    return True
+        return False, f"Failed to upload checkpoint {ckpt_name} to webui"
+    return True, ""
 
-def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
+def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
     """
     Remove checkpoint from webui. Returns true if removal was successful. Returns False if webui was not reachable.
     """
     response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
     if response is None or response.status_code != 200:
-        print(f"Failed to remove checkpoint {ckpt_name} from webui")
-        return False
-    return True
+        return False, f"Failed to remove checkpoint {ckpt_name} from webui"
+    return True, ""
 
 
     
