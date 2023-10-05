@@ -156,10 +156,11 @@ def request_sample(
     if not isinstance(prompts, list):
         prompts = [prompts] # convert to list if not list
     os.makedirs(output_dir_path, exist_ok=True)
+    message = ""
     any_success = False
     for i, prompt in enumerate(prompts):
         if not isinstance(prompt, dict):
-            print(f"Invalid prompt format. Must be a dict, got {prompt}")
+            message += f"Invalid prompt format. Must be a dict, got {prompt}\n"
             continue
         # controlnet params
         controlnet_params = ["controlnet_model", "controlnet_image", "controlnet_preprocessor"]
@@ -168,11 +169,11 @@ def request_sample(
             controlnet_model = prompt["controlnet_model"]
             controlnet_image = prompt.get("controlnet_image", None)
             if controlnet_image is None:
-                print(f"Invalid prompt format. Must include controlnet_image when using controlnet_model, got {prompt}")
+                message += f"Invalid prompt format. Must include controlnet_image when using controlnet_model, got {prompt}\n"
                 continue
             controlnet_preprocessor = prompt.get("controlnet_preprocessor", "none")
             if not os.path.exists(controlnet_image):
-                print(f"Invalid controlnet_image path. File does not exist: {controlnet_image}")
+                message += f"Invalid controlnet_image path. File does not exist: {controlnet_image}\n"
                 continue
             controlnet_unit = ControlNetUnit(input_image=open_controlnet_image(controlnet_image), module=controlnet_preprocessor, model=controlnet_model)
             controlnet_units = [controlnet_unit]
@@ -180,11 +181,11 @@ def request_sample(
             controlnet_units = []
             
         if "regex_to_replace" not in prompt:
-            print(f"Invalid prompt format. Must include regex_to_replace, got {prompt}")
+            message += f"Invalid prompt format. Must include regex_to_replace, got {prompt}\n"
             continue
         # replace regex_to_replace with ckpt_name, search in prompt and negative prompt
         if "prompt" not in prompt:
-            print(f"Invalid prompt format. Must include prompt, got {prompt}")
+            message += f"Invalid prompt format. Must include prompt, got {prompt}\n"
             continue
         prompt["prompt"] = prompt["prompt"].replace(prompt["regex_to_replace"], ckpt_name)
         if "negative_prompt" in prompt: # well this is optional but suggested
@@ -203,11 +204,13 @@ def request_sample(
             alwayson_scripts_dict = prompt['alwayson_scripts']
             for key, dictvalue in alwayson_scripts_dict.items():
                 for _key, value in dictvalue.items():
-                    if isinstance(value, str) and os.path.isfile(value):
-                        # convert to base64
-                        base64_str = raw_b64_img(open_mask_image(value))
-                        alwayson_scripts_dict[key][_key] = base64_str
-                        print(f"Converted {value} to base64 string")
+                    # value is list of strings
+                    for idx, elem in enumerate(value):
+                        if isinstance(elem, str) and os.path.isfile(elem):
+                            # convert to base64
+                            base64_str = raw_b64_img(open_mask_image(elem))
+                            alwayson_scripts_dict[key][_key][idx] = base64_str
+                            message += f"Converted {elem} to base64 string\n"
         positive_prompt, negative_prompt, seed = prompt.get("positive_prompt", "positive:None"), prompt.get("negative_prompt", "negative:None"), prompt.get("seed", 0)
         queued_task_result = webui_instance.txt2img_task(
             controlnet_units=controlnet_units,
@@ -230,6 +233,6 @@ def request_sample(
         executor_thread_pool.submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
         any_success = True
     if not any_success:
-        return False, "No valid prompts found"
-    return True, ""
+        return False, "No valid prompts found\n" + message
+    return True, message
         
