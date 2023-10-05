@@ -27,7 +27,7 @@ def sample_images_external_webui(
         accelerator:Accelerator,
         webui_url:str,
         webui_auth:str=None,
-        ckpt_name:str=""
+        abs_ckpt_path:str=""
     ) -> bool:
     """
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
@@ -55,7 +55,11 @@ def sample_images_external_webui(
     
     ckpt_name_to_upload = str(uuid.uuid4()) # generate random uuid for checkpoint name
     # the following function calls are thread-blocking so it is called and queued in a thread
-    upload_ckpt(webui_instance, ckpt_name, ckpt_name_to_upload)
+    upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload)
+    ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
+    # remove extension
+    if '.' in ckpt_name:
+        ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
     request_sample(
         prompt_file_path,
         output_dir_path,
@@ -64,7 +68,7 @@ def sample_images_external_webui(
         webui_instance,
         ckpt_name=ckpt_name
     )
-    remove_ckpt(webui_instance, ckpt_name)
+    remove_ckpt(webui_instance, abs_ckpt_path)
     pass # TODO
 
 def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):

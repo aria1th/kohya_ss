@@ -4422,14 +4422,14 @@ def sample_images_common(
         if args.webui_url is None or "http" not in args.webui_url:
             print("webui_url is not set or invalid, generating images locally.")
         else:
-            ckpt_saved_file = get_epoch_ckpt_name(args, ".safetensors", epoch)
+            ckpt_saved_file = os.path.join(args.output_dir, get_epoch_ckpt_name(args, ".safetensors", epoch))
             request_success = sample_images_external_webui(args.sample_prompts,
                                         args.output_dir + "/sample",
                                         args.output_name,
                                         accelerator,
                                         args.webui_url,
                                         args.webui_auth,
-                                        ckpt_name=ckpt_saved_file) # sends file
+                                        abs_ckpt_path=ckpt_saved_file) # sends file
         if request_success:
             return
         else:
