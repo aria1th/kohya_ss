@@ -12,7 +12,7 @@ from accelerate import Accelerator
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
-from webuiapi.test_utils import InstanceHolder, open_controlnet_image, open_mask_image, raw_b64_img
+from webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
 
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
     
@@ -36,7 +36,12 @@ def sample_images_external_webui(
     if not prompt_file_path.endswith(".json"):
         print(f"Invalid prompt file path. Must end with .json, got {prompt_file_path}")
         return False
-    webui_instance = WebUIApi(webui_url)
+    if not webui_url.endswith('/sdapi/v1'):
+        # first split by /, then remove last element, then join back
+        if webui_url.endswith('/'):
+            webui_url = webui_url[:-1]
+        webui_url = webui_url + '/sdapi/v1'
+    webui_instance = WebUIApi(baseurl=webui_url)
     if webui_auth and ':' in webui_auth:
         if len(webui_auth.split(':')) != 2:
             print(f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}")
