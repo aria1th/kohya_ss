@@ -368,7 +368,12 @@ def add_sample_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--sample_opt', type=str, default='epoch', help='Sample option for the project (default: epoch, can be None)')
   # sample_num
   parser.add_argument('--sample_num', type=int, default=1, help='Sample number for the project (default: 1)')
-  return []
+  # webui args - use_external_webui, webui_url, webui_auth
+  parser.add_argument('--use_external_webui', type=str, default=False, help='Use external webui for the project (default: False)')
+  parser.add_argument('--webui_url', type=str, default='', help='Webui url for the project (default: "")')
+  parser.add_argument('--webui_auth', type=str, default='', help='Webui auth for the project (default: "")')
+  
+  return ['use_external_webui', 'webui_url', 'webui_auth']
 
 def add_lora_args(parser : argparse.ArgumentParser) -> List[str]:
   """

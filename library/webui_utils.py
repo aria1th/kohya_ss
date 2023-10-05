@@ -158,7 +158,7 @@ def request_sample(
             if controlnet_image is None:
                 print(f"Invalid prompt format. Must include controlnet_image when using controlnet_model, got {prompt}")
                 continue
-            controlnet_preprocessor = prompt.get("controlnet_preprocessor", None)
+            controlnet_preprocessor = prompt.get("controlnet_preprocessor", "none")
             if not os.path.exists(controlnet_image):
                 print(f"Invalid controlnet_image path. File does not exist: {controlnet_image}")
                 continue
