@@ -30,6 +30,9 @@ import library.train_util as train_util
 from library.train_util import (
     DreamBoothDataset,
 )
+from library.webui_utils import (
+    wait_until_finished,
+)
 import library.config_util as config_util
 from library.config_util import (
     ConfigSanitizer,
@@ -925,6 +928,8 @@ class NetworkTrainer:
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
 
             print("model saved.")
+            
+        wait_until_finished() # wait for inference to finish if required
 
 def add_gor_args(parser: argparse.ArgumentParser)-> None:
     # required args : gor_num_groups : int, gor_regularization_type: str, gor_name_to_regularize: str, gor_regularize_fc_layers: bool, gor_ortho_decay: float
@@ -944,6 +949,7 @@ def setup_parser() -> argparse.ArgumentParser:
     train_util.add_dataset_arguments(parser, True, True, True)
     train_util.add_training_arguments(parser, True)
     train_util.add_optimizer_arguments(parser)
+    train_util.add_webui_args(parser)
     config_util.add_config_arguments(parser)
     custom_train_functions.add_custom_train_arguments(parser)
 

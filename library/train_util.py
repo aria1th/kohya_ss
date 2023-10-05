@@ -64,6 +64,8 @@ import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
 
+from library.webui_utils import sample_images_external_webui
+
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
 from library.original_unet import UNet2DConditionModel
@@ -3029,6 +3031,12 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         parser.add_argument(
             "--prior_loss_weight", type=float, default=1.0, help="loss weight for regularization images / 正則化画像のlossの重み"
         )
+        
+def add_webui_args(parser: argparse.ArgumentParser):
+    # use_external_webui:bool, webui_url:str, webui_auth:str
+    parser.add_argument("--use_external_webui", type=bool, default=False, help="use external webui / 外部webuiを使用する")
+    parser.add_argument("--webui_url", type=str, default=None, help="webui url / webuiのURL")
+    parser.add_argument("--webui_auth", type=str, default=None, help="webui auth / webuiの認証情報, user:password")
 
 
 def verify_training_args(args: argparse.Namespace):
@@ -4408,6 +4416,24 @@ def sample_images_common(
     if not os.path.isfile(args.sample_prompts):
         print(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
         return
+    
+    # check if generate by external webui is enabled #use_external_webui:bool, webui_url:str, webui_auth:str
+    if args.use_external_webui:
+        if args.webui_url is None or "http" not in args.webui_url:
+            print("webui_url is not set or invalid, generating images locally.")
+        else:
+            ckpt_saved_file = get_epoch_ckpt_name(args, ".safetensors", epoch)
+            request_success = sample_images_external_webui(args.sample_prompts,
+                                        args.output_dir + "/sample",
+                                        args.output_name,
+                                        accelerator,
+                                        args.webui_url,
+                                        args.webui_auth,
+                                        ckpt_name=ckpt_saved_file) # sends file
+        if request_success:
+            return
+        else:
+            print("Failed to send request to external webui, generating images locally.")
 
     org_vae_device = vae.device  # CPUにいるはず
     vae.to(device)
