@@ -1,5 +1,5 @@
 from typing import List, Dict, Tuple, Any, Union, Optional
-from webuiapi.webuiapi import WebUIApi, QueuedTaskResult, ControlNetUnit, raw_b64_img
+from library.webuiapi.webuiapi import WebUIApi, QueuedTaskResult, ControlNetUnit, raw_b64_img
 import os
 import time
 from PIL import Image
