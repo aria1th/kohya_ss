@@ -242,7 +242,7 @@ def request_sample(
         )
         # start thread to wait for result
         def wait_and_save(queued_task_result:QueuedTaskResult, output_dir_path, output_name, accelerator):
-            while not queued_task_result.check_finished(): # can throw exception if webui is not reachable or broken
+            while not queued_task_result.is_finished(): # can throw exception if webui is not reachable or broken
                 time.sleep(1)
             # 6 digits of time
             strftime = f"{time.strftime('%Y%m%d_%H%M%S')}"
@@ -254,10 +254,15 @@ def request_sample(
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
             log_wandb(accelerator, image, positive_prompt, negative_prompt, seed)
         # start thread
-        get_thread_pool_executor().submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
+        
+        
         if should_sync:
             # wait until job is done and executor is idle
-            get_thread_pool_executor().shutdown(wait=True)
+            get_thread_pool_executor().shutdown(wait=True) # wait until previous job is done
+            # here directly execute the function
+            wait_and_save(queued_task_result, output_dir_path, output_name, accelerator)
+        else:
+            get_thread_pool_executor().submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
         any_success = True
     if not any_success:
         return False, "No valid prompts found\n" + message
