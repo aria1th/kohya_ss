@@ -3037,6 +3037,8 @@ def add_webui_args(parser: argparse.ArgumentParser):
     parser.add_argument("--use_external_webui", type=bool, default=False, help="use external webui / 外部webuiを使用する")
     parser.add_argument("--webui_url", type=str, default=None, help="webui url / webuiのURL")
     parser.add_argument("--webui_auth", type=str, default=None, help="webui auth / webuiの認証情報, user:password")
+    # should_wait_webui_process
+    parser.add_argument("--should_wait_webui_process", type=bool, default=False, help="wait webui process / webuiプロセスの終了を待つ")
 
 
 def verify_training_args(args: argparse.Namespace):
@@ -4429,7 +4431,8 @@ def sample_images_common(
                                         accelerator,
                                         args.webui_url,
                                         args.webui_auth,
-                                        abs_ckpt_path=ckpt_saved_file) # sends file
+                                        abs_ckpt_path=ckpt_saved_file,
+                                        should_sync=args.should_wait_webui_process) # sends file
         if message:
             print(message)
         if request_success:

@@ -15,7 +15,16 @@ from library.webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
 from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
 
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
+executor_thread_pool.submit(lambda: None) # start thread
     
+def get_thread_pool_executor() -> ThreadPoolExecutor:
+    # check if thread pool is shutdown, if so, restart
+    global executor_thread_pool
+    if executor_thread_pool._shutdown: # pylint: disable=protected-access
+        executor_thread_pool = ThreadPoolExecutor(max_workers=1)
+        executor_thread_pool.submit(lambda: None)
+    return executor_thread_pool
+        
 def wait_until_finished():
     # wait until all threads are finished
     executor_thread_pool.shutdown(wait=True)
@@ -27,7 +36,8 @@ def sample_images_external_webui(
         accelerator:Accelerator,
         webui_url:str,
         webui_auth:str=None,
-        abs_ckpt_path:str=""
+        abs_ckpt_path:str="",
+        should_sync:bool = False
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
@@ -52,7 +62,7 @@ def sample_images_external_webui(
     
     ckpt_name_to_upload = str(uuid.uuid4()) # generate random uuid for checkpoint name
     # the following function calls are thread-blocking so it is called and queued in a thread
-    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload)
+    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload, should_sync=should_sync)
     if not upload_success:
         return False, message
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
@@ -65,32 +75,43 @@ def sample_images_external_webui(
         output_name,
         accelerator,
         webui_instance,
-        ckpt_name=ckpt_name
+        ckpt_name=ckpt_name,
+        should_sync=should_sync
     )
     if not sample_success:
         return False, msg
-    remove_success, msg = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload)
+    remove_success, msg = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload, should_sync=should_sync)
     if not remove_success:
         return True, msg # still return true if remove failed
     return True, ""
 
-def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
+def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
     """
     Upload checkpoint to webui. Returns true if upload was successful. Returns False if webui was not reachable.
     """
-    response = webui_instance.upload_lora(ckpt_name, ckpt_name_to_upload) # uploaded to ckpt_name_to_upload/ckpt_name
-    if response is None or response.status_code != 200:
-        print(f"Failed to upload checkpoint {ckpt_name} to webui")
-        return False, f"Failed to upload checkpoint {ckpt_name} to webui"
+    # check if ckpt_name is a valid path
+    if not os.path.exists(ckpt_name):
+        return False, f"Invalid checkpoint path. File does not exist: {ckpt_name}"
+    def upload_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
+        response = webui_instance.upload_lora(ckpt_name, ckpt_name_to_upload)
+    # submit thread
+    get_thread_pool_executor().submit(upload_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
+    if should_sync:
+        # wait until job is done and executor is idle
+        get_thread_pool_executor().shutdown(wait=True)
     return True, ""
 
-def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
+def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
     """
     Remove checkpoint from webui. Returns true if removal was successful. Returns False if webui was not reachable.
     """
-    response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
-    if response is None or response.status_code != 200:
-        return False, f"Failed to remove checkpoint {ckpt_name} from webui"
+    def remove_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
+        response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
+    # submit thread
+    get_thread_pool_executor().submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
+    if should_sync:
+        # wait until job is done and executor is idle
+        get_thread_pool_executor().shutdown(wait=True)
     return True, ""
 
 
@@ -137,7 +158,8 @@ def request_sample(
         output_name:str,
         accelerator:Accelerator,
         webui_instance:WebUIApi,
-        ckpt_name:str=""
+        ckpt_name:str="",
+        should_sync:bool = False
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. This function is thread-locking. 
@@ -230,7 +252,10 @@ def request_sample(
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
             log_wandb(accelerator, image, positive_prompt, negative_prompt, seed)
         # start thread
-        executor_thread_pool.submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
+        get_thread_pool_executor().submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
+        if should_sync:
+            # wait until job is done and executor is idle
+            get_thread_pool_executor().shutdown(wait=True)
         any_success = True
     if not any_success:
         return False, "No valid prompts found\n" + message

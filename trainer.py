@@ -372,8 +372,10 @@ def add_sample_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--use_external_webui', type=str, default=False, help='Use external webui for the project (default: False)')
   parser.add_argument('--webui_url', type=str, default='', help='Webui url for the project (default: "")')
   parser.add_argument('--webui_auth', type=str, default='', help='Webui auth for the project (default: "")')
+  # should_wait_webui_process
+  parser.add_argument('--should_wait_webui_process', type=str, default=True, help='Should wait webui process for the project (default: True)')
   
-  return ['use_external_webui', 'webui_url', 'webui_auth']
+  return ['use_external_webui', 'webui_url', 'webui_auth', 'should_wait_webui_process']
 
 def add_lora_args(parser : argparse.ArgumentParser) -> List[str]:
   """
