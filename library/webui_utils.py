@@ -246,11 +246,10 @@ def request_sample(
                 time.sleep(1)
             # 6 digits of time
             strftime = f"{time.strftime('%Y%m%d_%H%M%S')}"
-            result = queued_task_result.get_image()
-            if result is None:
+            image = queued_task_result.get_image()
+            if image is None:
                 print("Failed to generate sample")
                 return
-            image = result.image
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
             log_wandb(accelerator, image, positive_prompt, negative_prompt, seed)
         # start thread
