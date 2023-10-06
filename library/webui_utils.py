@@ -148,7 +148,7 @@ def log_wandb(
         logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
         wandb_tracker.log(
             {
-                logging_caption_key: wandb.Image(image, caption=f"negative_prompt: {negative_prompt}"),
+                logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt}"),
             }
         )
     except:  # wandb 無効時
@@ -235,7 +235,7 @@ def request_sample(
                             base64_str = raw_b64_img(open_mask_image(elem))
                             alwayson_scripts_dict[key][_key][idx] = base64_str
                             message += f"Converted {elem} to base64 string\n"
-        positive_prompt, negative_prompt, seed = prompt.get("positive_prompt", "positive:None"), prompt.get("negative_prompt", "negative:None"), prompt.get("seed", 0)
+        positive_prompt, negative_prompt, seed = prompt.get("prompt", "positive:None"), prompt.get("negative_prompt", "negative:None"), prompt.get("seed", 0)
         queued_task_result = webui_instance.txt2img_task(
             controlnet_units=controlnet_units,
             **prompt
