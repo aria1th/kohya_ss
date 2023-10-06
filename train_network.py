@@ -907,8 +907,11 @@ class NetworkTrainer:
 
                     if args.save_state:
                         train_util.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
-
-            self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
+            # if args.use_external_webui is True and (epoch + 1) == num_train_epochs, skip sampling
+            if args.use_external_webui is True and (epoch + 1) == num_train_epochs:
+                pass
+            else:
+                self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
             # end of epoch
 
@@ -926,6 +929,9 @@ class NetworkTrainer:
         if is_main_process:
             ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
+            # if use_external_webui is True and (epoch + 1) == num_train_epochs, sample here
+            if args.use_external_webui is True:
+                self.sample_images(accelerator, args, num_train_epochs, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
             print("model saved.")
             

@@ -4425,6 +4425,13 @@ def sample_images_common(
             print("webui_url is not set or invalid, generating images locally.")
         else:
             ckpt_saved_file = os.path.join(args.output_dir, get_epoch_ckpt_name(args, ".safetensors", epoch))
+            if not os.path.isfile(ckpt_saved_file):
+                # try last epoch
+                ckpt_saved_file = os.path.join(args.output_dir, get_last_ckpt_name(args, ".safetensors"))
+                if not os.path.isfile(ckpt_saved_file):
+                    print("No checkpoint file found, generating images locally.")
+                    ckpt_saved_file = None
+                    return
             request_success, message = sample_images_external_webui(args.sample_prompts,
                                         args.output_dir + "/sample",
                                         args.output_name,
