@@ -78,9 +78,11 @@ def sample_images_external_webui(
         ckpt_name=ckpt_name,
         should_sync=should_sync
     )
+    msg = message + msg
     if not sample_success:
         return False, msg
-    remove_success, msg = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload, should_sync=should_sync)
+    remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload, should_sync=should_sync)
+    msg += msg_remove
     if not remove_success:
         return True, msg # still return true if remove failed
     return True, msg
