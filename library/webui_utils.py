@@ -83,7 +83,7 @@ def sample_images_external_webui(
     remove_success, msg = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload, should_sync=should_sync)
     if not remove_success:
         return True, msg # still return true if remove failed
-    return True, ""
+    return True, msg
 
 def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
     """
@@ -219,7 +219,7 @@ def request_sample(
             if param in prompt:
                 prompt.pop(param)
         # if seed is not specified, generate random seed
-        if "seed" not in prompt or prompt["seed"] is -1:
+        if "seed" not in prompt or prompt["seed"] == -1:
             prompt["seed"] = np.random.randint(0, 100000)
         # fix alwayson_script args if there is any 'file' references as strings
         if 'alwayson_scripts' in prompt:
