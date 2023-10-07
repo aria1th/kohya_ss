@@ -4416,7 +4416,10 @@ def sample_images_common(
 
     print(f"\ngenerating sample images at step / サンプル画像生成 ステップ: {steps}")
     if not os.path.isfile(args.sample_prompts):
-        print(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
+        if not os.path.exists(args.sample_prompts):
+            print(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
+        else:
+            print(f"Prompt file is a directory / プロンプトファイルがディレクトリです: {args.sample_prompts}")
         return
     
     # check if generate by external webui is enabled #use_external_webui:bool, webui_url:str, webui_auth:str

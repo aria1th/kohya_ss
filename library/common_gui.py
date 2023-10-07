@@ -975,7 +975,7 @@ def save_to_file(content):
         if not os.path.exists(logs_directory):
             os.makedirs(logs_directory)
 
-        with open(file_path, 'a') as file:
+        with open(file_path, 'a', encoding='utf-8') as file:
             file.write(content + '\n')
     except IOError as e:
         print(f'Error: Could not write to file - {e}')

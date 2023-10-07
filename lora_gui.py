@@ -33,7 +33,7 @@ from library.tensorboard_gui import (
     stop_tensorboard,
 )
 from library.utilities import utilities_tab
-from library.class_sample_images import SampleImages, run_cmd_sample
+from library.class_sample_images import SampleImages,SampleImagesExternal, run_cmd_sample
 from library.class_lora_tab import LoRATools
 
 from library.dreambooth_folder_creation_gui import (
@@ -173,6 +173,9 @@ def save_configuration(
     full_bf16,
     min_timestep,
     max_timestep,
+    external_webui_address:str = "",
+    external_webui_auth:str = "", # "user:password"
+    webui_sample_json_file_path:str = "", # "sample.json"
 ):
     # Get list of function parameters and values
     parameters = list(locals().items())
@@ -325,7 +328,10 @@ def open_configuration(
     full_bf16,
     min_timestep,
     max_timestep,
-    training_preset,
+    external_webui_address:str = "",
+    external_webui_auth:str = "", # "user:password"
+    webui_sample_json_file_path:str = "", # "sample.json"
+    training_preset:None = None,
 ):
     # Get list of function parameters and values
     parameters = list(locals().items())
@@ -499,6 +505,9 @@ def train_model(
     full_bf16,
     min_timestep,
     max_timestep,
+    external_webui_address:str = "",
+    external_webui_auth:str = "", # "user:password"
+    webui_sample_json_file_path:str = "", # "sample.json"
     cuda_device = '',
     run_as_subprocess = False
 ) -> str:
@@ -1022,6 +1031,9 @@ def train_model(
         sample_sampler,
         sample_prompts,
         output_dir,
+        external_webui_address,
+        external_webui_auth,
+        webui_sample_json_file_path
     )
 
     if print_only_bool:
@@ -1509,6 +1521,9 @@ def lora_tab(
             with gr.Tab('Samples', elem_id='samples_tab'):
                 sample = SampleImages()
 
+            with gr.Tab('Samples_WebUI', elem_id='samples_webui_tab'):
+                sample_webui = SampleImagesExternal()
+                
             LoRA_type.change(
                 update_LoRA_settings,
                 inputs=[LoRA_type],
@@ -1714,6 +1729,9 @@ def lora_tab(
             advanced_training.full_bf16,
             advanced_training.min_timestep,
             advanced_training.max_timestep,
+            sample_webui.external_webui_address,
+            sample_webui.external_webui_auth,
+            sample_webui.webui_sample_json_file_path
         ]
 
         config.button_open_config.click(

@@ -31,7 +31,7 @@ from library.tensorboard_gui import (
     stop_tensorboard,
 )
 from library.utilities import utilities_tab
-from library.class_sample_images import SampleImages, run_cmd_sample
+from library.class_sample_images import SampleImages, SampleImagesExternal, run_cmd_sample
 
 from library.custom_logging import setup_logging
 from localization_ext import add_javascript
@@ -141,6 +141,9 @@ def save_configuration(
     sdxl_no_half_vae,
     min_timestep,
     max_timestep,
+    external_webui_address:str = "",
+    external_webui_auth:str = "", # "user:password"
+    webui_sample_json_file_path:str = "", # "sample.json"
 ):
     # Get list of function parameters and values
     parameters = list(locals().items())
@@ -268,7 +271,10 @@ def open_configuration(
     sdxl_no_half_vae,
     min_timestep,
     max_timestep,
-    training_preset,
+    external_webui_address:str = "",
+    external_webui_auth:str = "", # "user:password"
+    webui_sample_json_file_path:str = "", # "sample.json"
+    training_preset:None = None,
 ):
     # Get list of function parameters and values
     parameters = list(locals().items())
@@ -404,6 +410,9 @@ def train_model(
     sdxl_no_half_vae,
     min_timestep,
     max_timestep,
+    external_webui_address:str = "",
+    external_webui_auth:str = "", # "user:password"
+    webui_sample_json_file_path:str = "", # "sample.json"
 ):
     # Get list of function parameters and values
     parameters = list(locals().items())
@@ -642,6 +651,9 @@ def train_model(
         sample_sampler,
         sample_prompts,
         output_dir,
+        external_webui_address,
+        external_webui_auth,
+        webui_sample_json_file_path
     )
 
     if print_only_bool:
@@ -890,6 +902,8 @@ def finetune_tab(headless=False):
 
             with gr.Tab('Samples', elem_id='samples_tab'):
                 sample = SampleImages()
+            with gr.Tab('Samples_WebUI', elem_id='samples_webui_tab'):
+                sample_webui = SampleImagesExternal()
 
         with gr.Row():
             button_run = gr.Button('Start training', variant='primary')
@@ -1001,6 +1015,9 @@ def finetune_tab(headless=False):
             sdxl_params.sdxl_no_half_vae,
             advanced_training.min_timestep,
             advanced_training.max_timestep,
+            sample_webui.external_webui_address,
+            sample_webui.external_webui_auth,
+            sample_webui.webui_sample_json_file_path
         ]
 
         config.button_open_config.click(
