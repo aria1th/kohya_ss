@@ -88,8 +88,11 @@ class QueuedTaskResult:
             # it should return {"current_task_id" : str, "pending_tasks" : [{"api_task_id" : str}]}
             # if self.task_id is found in any of pending tasks or current_task_id, then it is not finished
             # else, find /agent-scheduler/v1/results/{task_id}
-            response = requests.get(self.task_address + "/agent-scheduler/v1/queue")
-            req_json = response.json()
+            response = requests.get(self.task_address + "/agent-scheduler/v1/queue") 
+            try:
+                req_json = response.json()
+            except json.JSONDecodeError as e:
+                raise RuntimeError("failed to parse json from " + self.task_address + "/agent-scheduler/v1/queue") from e
             if self.task_id == req_json["current_task_id"]:
                 return False
             elif any([self.task_id == task["api_task_id"] for task in req_json["pending_tasks"]]):

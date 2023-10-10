@@ -67,7 +67,7 @@ def sample_images_external_webui(
         return False, message
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
     # remove extension
-    refresh_lora() # refresh lora to make sure it is up to date
+    refresh_lora(webui_instance, should_sync=should_sync) # refresh lora to make sure it is up to date
     if '.' in ckpt_name:
         ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
     sample_success, msg = request_sample(
