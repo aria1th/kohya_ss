@@ -105,7 +105,7 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
     else:
         # directly execute the function
         reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
-        response_text = reponse.text
+        response_text = reponse.text if reponse is not None else ""
     return True, response_text
 
 def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[bool, str]:
@@ -122,8 +122,8 @@ def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[boo
         get_thread_pool_executor().submit(refresh_thread, webui_instance)
     else:
         # directly execute the function
-        reponse = refresh_thread(webui_instance)
-        response_text = reponse.text
+        response = refresh_thread(webui_instance)
+        response_text = response.text if response is not None else ""
     return True, response_text
 
 

@@ -1224,7 +1224,7 @@ class WebUIApi:
         response = self.session.post(url=f"{self.baseurl}/refresh-checkpoints")
         return response.json()
     
-    def refresh_loras(self):
+    def refresh_loras(self) -> None: # returns null, be careful
         response = self.session.post(url=f"{self.baseurl}/refresh-loras")
         return response.json()
 
