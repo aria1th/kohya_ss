@@ -114,15 +114,17 @@ def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[boo
     Always return true.
     """
     def refresh_thread(webui_instance:WebUIApi):
-        response = webui_instance.refresh_lora()
+        response = webui_instance.refresh_loras()
         return response
     # submit thread
+    response_text = ""
     if not should_sync:
         get_thread_pool_executor().submit(refresh_thread, webui_instance)
     else:
         # directly execute the function
         reponse = refresh_thread(webui_instance)
-    return True, ""
+        response_text = reponse.text
+    return True, response_text
 
 
 def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
