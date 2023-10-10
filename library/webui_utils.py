@@ -96,12 +96,16 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
         return False, f"Invalid checkpoint path. File does not exist: {ckpt_name}"
     def upload_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
         response = webui_instance.upload_lora(ckpt_name, ckpt_name_to_upload)
+        return response
     # submit thread
-    get_thread_pool_executor().submit(upload_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
-    if should_sync:
-        # wait until job is done and executor is idle
-        get_thread_pool_executor().shutdown(wait=True)
-    return True, ""
+    response_text = ""
+    if not should_sync:
+        get_thread_pool_executor().submit(upload_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
+    else:
+        # directly execute the function
+        reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
+        response_text = reponse.text
+    return True, response_text
 
 def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
     """
@@ -110,10 +114,11 @@ def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
     def remove_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
         response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
     # submit thread
-    get_thread_pool_executor().submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
-    if should_sync:
-        # wait until job is done and executor is idle
-        get_thread_pool_executor().shutdown(wait=True)
+    if not should_sync:
+        get_thread_pool_executor().submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
+    else:
+        # directly execute the function
+        remove_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
     return True, ""
 
 
