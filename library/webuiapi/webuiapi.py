@@ -91,8 +91,9 @@ class QueuedTaskResult:
             response = requests.get(self.task_address + "/agent-scheduler/v1/queue") 
             try:
                 req_json = response.json()
-            except json.JSONDecodeError as e:
-                raise RuntimeError("failed to parse json from " + self.task_address + "/agent-scheduler/v1/queue") from e
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("failed to parse json from " + self.task_address + "/agent-scheduler/v1/queue" +
+                                   f", {response.status_code}, {response.text}") from exc
             if self.task_id == req_json["current_task_id"]:
                 return False
             elif any([self.task_id == task["api_task_id"] for task in req_json["pending_tasks"]]):
