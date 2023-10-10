@@ -67,6 +67,7 @@ def sample_images_external_webui(
         return False, message
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
     # remove extension
+    refresh_lora() # refresh lora to make sure it is up to date
     if '.' in ckpt_name:
         ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
     sample_success, msg = request_sample(
@@ -106,6 +107,23 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
         reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
         response_text = reponse.text
     return True, response_text
+
+def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[bool, str]:
+    """
+    Sends refresh request to webui.
+    Always return true.
+    """
+    def refresh_thread(webui_instance:WebUIApi):
+        response = webui_instance.refresh_lora()
+        return response
+    # submit thread
+    if not should_sync:
+        get_thread_pool_executor().submit(refresh_thread, webui_instance)
+    else:
+        # directly execute the function
+        reponse = refresh_thread(webui_instance)
+    return True, ""
+
 
 def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
     """

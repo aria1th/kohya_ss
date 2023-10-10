@@ -1220,6 +1220,10 @@ class WebUIApi:
     def refresh_checkpoints(self):
         response = self.session.post(url=f"{self.baseurl}/refresh-checkpoints")
         return response.json()
+    
+    def refresh_loras(self):
+        response = self.session.post(url=f"{self.baseurl}/refresh-loras")
+        return response.json()
 
     def get_scripts(self):
         response = self.session.get(url=f"{self.baseurl}/scripts")
