@@ -236,7 +236,8 @@ def request_sample(
         if "prompt" not in prompt:
             message += f"Invalid prompt format. Must include prompt, got {prompt}\n"
             continue
-        prompt["prompt"] = prompt["prompt"].replace(prompt["regex_to_replace"], ckpt_name)
+        orig_prompt:str = prompt["prompt"]
+        prompt["prompt"] = orig_prompt.replace(prompt["regex_to_replace"], ckpt_name)
         if "negative_prompt" in prompt: # well this is optional but suggested
             prompt["negative_prompt"] = prompt["negative_prompt"].replace(prompt["regex_to_replace"], ckpt_name)
         # pop regex_to_replace
@@ -266,7 +267,7 @@ def request_sample(
             **prompt
         )
         # start thread to wait for result
-        def wait_and_save(queued_task_result:QueuedTaskResult, output_dir_path, output_name, accelerator):
+        def wait_and_save(queued_task_result:QueuedTaskResult, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed):
             while not queued_task_result.is_finished(): # can throw exception if webui is not reachable or broken
                 time.sleep(5) # wait 5 seconds before checking again
             # 6 digits of time
@@ -276,7 +277,8 @@ def request_sample(
                 print("Failed to generate sample")
                 return
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
-            log_wandb(accelerator, image, positive_prompt, negative_prompt, seed)
+            # 
+            log_wandb(accelerator, image, orig_prompt, negative_prompt, seed)
         # start thread
         
         
@@ -284,9 +286,9 @@ def request_sample(
             # wait until job is done and executor is idle
             get_thread_pool_executor().shutdown(wait=True) # wait until previous job is done
             # here directly execute the function
-            wait_and_save(queued_task_result, output_dir_path, output_name, accelerator)
+            wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         else:
-            get_thread_pool_executor().submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator)
+            get_thread_pool_executor().submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         any_success = True
     if not any_success:
         return False, "No valid prompts found\n" + message
