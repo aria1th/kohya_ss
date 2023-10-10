@@ -268,7 +268,7 @@ def request_sample(
         # start thread to wait for result
         def wait_and_save(queued_task_result:QueuedTaskResult, output_dir_path, output_name, accelerator):
             while not queued_task_result.is_finished(): # can throw exception if webui is not reachable or broken
-                time.sleep(1)
+                time.sleep(5) # wait 5 seconds before checking again
             # 6 digits of time
             strftime = f"{time.strftime('%Y%m%d_%H%M%S')}"
             image = queued_task_result.get_image()

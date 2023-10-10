@@ -68,6 +68,7 @@ class QueuedTaskResult:
     def __init__(self, task_id: str, task_address: str):
         self.task_id = task_id
         self.task_address = task_address
+        self.expect_rate_limit = True
 
     def get_image(self):
         self.check_finished()
@@ -92,6 +93,8 @@ class QueuedTaskResult:
             try:
                 req_json = response.json()
             except json.JSONDecodeError as exc:
+                if self.expect_rate_limit: # if rate limit is expected, then return False
+                    return False
                 raise RuntimeError("failed to parse json from " + self.task_address + "/agent-scheduler/v1/queue" +
                                    f", {response.status_code}, {response.text}") from exc
             if self.task_id == req_json["current_task_id"]:
