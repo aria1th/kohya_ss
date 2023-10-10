@@ -102,6 +102,7 @@ class QueuedTaskResult:
             elif any([self.task_id == task["api_task_id"] for task in req_json["pending_tasks"]]):
                 return False
             else:
+                self._wait_between_calls()
                 result_response = requests.get(self.task_address + "/agent-scheduler/v1/results/" + self.task_id)
                 if result_response.status_code != 200:
                     raise RuntimeError(f"task id {self.task_id} is not found in queue or results, " +str(result_response.status_code), result_response.text)
@@ -116,7 +117,10 @@ class QueuedTaskResult:
                 return True
         else:
             return True
-
+        
+    def _wait_between_calls(self):
+        import time
+        time.sleep(5)
 
 class ControlNetUnit:
     def __init__(
