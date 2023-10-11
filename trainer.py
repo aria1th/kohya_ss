@@ -101,8 +101,7 @@ def validate_dataset():
     print(f"🔮 There will be {total_steps} steps, divided into {estimated_epochs} epochs and then some.")
 
   if total_steps > 10000:
-    print("💥 Error: Your total steps are too high. You probably made a mistake. Aborting...")
-    raise Exception("Too many steps")
+    print("💥 Warn: Your total steps are too high. You probably made a mistake....")
 
   if adjust_tags:
     print(f"\n📎 Weighted tags: {'ON' if weighted_captions else 'OFF'}")
