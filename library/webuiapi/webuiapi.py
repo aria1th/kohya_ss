@@ -62,8 +62,11 @@ class QueuedTaskResult:
     task_id: str
     task_address: str # address to get task status
     image: str = ""# base64 encoded image
+    images: List[str] = []
     terminated: bool = False
-    cached_image: Image = None
+    cached_image: Image.Image = None
+    cached_images: List[Image.Image] = []
+    infotexts:list[str] = [] # list of infotexts for each image
     
     def __init__(self, task_id: str, task_address: str):
         self.task_id = task_id
@@ -78,11 +81,30 @@ class QueuedTaskResult:
             self.cached_image = Image.open(io.BytesIO(base64.b64decode(self.image.split(',')[-1])))
         return self.cached_image
     
+    def get_images(self):
+        self.check_finished()
+        if not self.terminated:
+            return None
+        if not self.cached_images: # if empty
+            self.cached_images = [Image.open(io.BytesIO(base64.b64decode(img.split(',')[-1]))) for img in self.images]
+        return self.cached_images
+    
     def is_finished(self):
+        """
+        Returns True if task is finished
+        Returns False if task is not finished
+        Throws RuntimeError if task is failed
+        Throws ValueError if task is not found
+        """
         self.check_finished()
         return self.terminated
     
-    def check_finished(self):
+    def check_finished(self, check_delay:int = 5):
+        """
+        check if task is finished
+        Throws RuntimeError if task is failed
+        Throws ValueError if task is not found
+        """
         if not self.terminated:
             # self.task_address is base address, /agent-scheduler should be added
             # check /agent-scheduler/v1/queue
@@ -99,28 +121,33 @@ class QueuedTaskResult:
                                    f", {response.status_code}, {response.text}") from exc
             if self.task_id == req_json["current_task_id"]:
                 return False
-            elif any([self.task_id == task["api_task_id"] for task in req_json["pending_tasks"]]):
+            elif any((self.task_id == task["api_task_id"] for task in req_json["pending_tasks"])):
                 return False
             else:
-                self._wait_between_calls()
+                self._wait_between_calls(check_delay)
                 result_response = requests.get(self.task_address + "/agent-scheduler/v1/results/" + self.task_id)
                 if result_response.status_code != 200:
                     raise RuntimeError(f"task id {self.task_id} is not found in queue or results, " +str(result_response.status_code), result_response.text)
-                if result_response.json().get('success', False) == False:
+                if not result_response.json().get('success', False):
                     # check 'Task is pending' or 'Task is running'
                     if result_response.json().get('message', '') == 'Task is pending' or result_response.json().get('message', '') == 'Task is running':
                         return False
-                    raise RuntimeError(f"task id {self.task_id} has failed, " +str(result_response.status_code), result_response.text)
+                    elif result_response.json().get('message', '') == 'Task not found' or result_response.json().get('message', '') == 'Task result is not available':
+                        raise ValueError(f"task id {self.task_id} has failed, " +str(result_response.status_code), result_response.text)
+                    else:
+                        raise RuntimeError(f"task id {self.task_id} has failed for unknown result, " +str(result_response.status_code), result_response.text)
                 self.image = result_response.json()['data'][0]['image']
+                self.images = [img['image'] for img in result_response.json()['data']]
+                self.infotexts = [img.get('infotext') for img in result_response.json()['data']]
                 self.terminated = True
                 self.task_address = ""
                 return True
         else:
             return True
         
-    def _wait_between_calls(self):
+    def _wait_between_calls(self, seconds=1):
         import time
-        time.sleep(5)
+        time.sleep(seconds)
 
 class ControlNetUnit:
     def __init__(

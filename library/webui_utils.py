@@ -281,7 +281,7 @@ def request_sample(
             strftime = f"{time.strftime('%Y%m%d_%H%M%S')}"
             image = queued_task_result.get_image()
             if image is None:
-                print("Failed to generate sample")
+                raise RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
                 return
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
             # 
