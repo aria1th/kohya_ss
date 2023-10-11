@@ -848,15 +848,14 @@ class NetworkTrainer:
                 if accelerator.sync_gradients:
                     progress_bar.update(1)
                     global_step += 1
-
-                    self.sample_images(accelerator, args, None, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
-
+                    
                     # 指定ステップごとにモデルを保存
                     if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
                         accelerator.wait_for_everyone()
                         if accelerator.is_main_process:
                             ckpt_name = train_util.get_step_ckpt_name(args, "." + args.save_model_as, global_step)
                             save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
+                            self.sample_images(accelerator, args, None, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
                             if args.save_state:
                                 train_util.save_and_remove_state_stepwise(args, accelerator, global_step)
@@ -910,7 +909,7 @@ class NetworkTrainer:
             # if args.use_external_webui is True and (epoch + 1) == num_train_epochs, skip sampling
             if args.use_external_webui is True and (epoch + 1) == num_train_epochs:
                 pass
-            else:
+            elif is_main_process:
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
             # end of epoch
