@@ -582,6 +582,16 @@ class WebUIApi:
         else:
             response = self.session.post(url=url, json=json)
             return self._to_api_result(response)
+        
+    def resume_agent_scheduler(self):
+        # post agent-scheduler/v1/queue/resume
+        target_url = self.real_url + "/agent-scheduler/v1/queue/resume"
+        return self.session.post(target_url)
+    
+    def pause_agent_scheduler(self):
+        # post agent-scheduler/v1/queue/pause
+        target_url = self.real_url + "/agent-scheduler/v1/queue/pause"
+        return self.session.post(target_url)
 
     async def async_post(self, url, json):
         import aiohttp
