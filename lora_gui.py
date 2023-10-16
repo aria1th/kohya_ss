@@ -4,6 +4,7 @@ import math
 import os
 import argparse
 from datetime import datetime
+from tempfile import NamedTemporaryFile
 from library.common_gui import (
     get_file_path,
     get_any_file_path,
@@ -35,6 +36,7 @@ from library.tensorboard_gui import (
 from library.utilities import utilities_tab
 from library.class_sample_images import SampleImages,SampleImagesExternal, run_cmd_sample
 from library.class_lora_tab import LoRATools
+from library.accelerate_util import write_basic_config_yaml
 
 from library.dreambooth_folder_creation_gui import (
     gradio_dreambooth_folder_creation_tab,
@@ -706,8 +708,12 @@ def train_model(
     max_search_retries = 100
     
     available_port = get_available_port(starting_port, max_search_retries)
+    
+    tempfile_accelerate_config = NamedTemporaryFile(delete=False)
+    tempfile_path = tempfile_accelerate_config.name
+    write_basic_config_yaml(save_location=tempfile_path, gpu_ids=cuda_device if cuda_device else 'all')
 
-    run_cmd = f'accelerate launch --num_cpu_threads_per_process={num_cpu_threads_per_process}' + ' --main_process_port=' + str(available_port)
+    run_cmd = f'accelerate launch --config-file {tempfile_path} --num_cpu_threads_per_process={num_cpu_threads_per_process}' + ' --main_process_port=' + str(available_port)
     if cuda_device != '':
         run_cmd += f' --gpu_ids={cuda_device}'
     if sdxl:
