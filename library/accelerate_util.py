@@ -32,11 +32,6 @@ def write_basic_config_yaml(save_location:str = "", gpu_ids:str="all") -> bool:
     assert gpu_ids != "", "Please provide a gpu_ids string, e.g. 'all' or '0,1,2,3'"
     path = Path(save_location)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        print(
-            f"Configuration already exists at {save_location}, will not override. Run `accelerate config` manually or pass a different `save_location`."
-        )
-        return False
     # write default yaml config object (which will be overwritten)
     config_dict = {
         'compute_environment': 'LOCAL_MACHINE',
