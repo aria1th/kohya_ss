@@ -714,7 +714,7 @@ def train_model(
     cuda_device = cuda_device.replace(' ', '') # Remove spaces from cuda_device string
     write_basic_config_yaml(save_location=tempfile_path, gpu_ids=cuda_device if cuda_device else 'all')
 
-    run_cmd = f'accelerate launch --config-file {tempfile_path} --num_cpu_threads_per_process={num_cpu_threads_per_process}' + ' --main_process_port=' + str(available_port)
+    run_cmd = f'accelerate launch --config_file {tempfile_path} --num_cpu_threads_per_process={num_cpu_threads_per_process}' + ' --main_process_port=' + str(available_port)
     if cuda_device != '':
         run_cmd += f' --gpu_ids={cuda_device}'
     if sdxl:
