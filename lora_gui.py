@@ -711,6 +711,7 @@ def train_model(
     
     tempfile_accelerate_config = NamedTemporaryFile(delete=False)
     tempfile_path = tempfile_accelerate_config.name
+    cuda_device = cuda_device.replace(' ', '') # Remove spaces from cuda_device string
     write_basic_config_yaml(save_location=tempfile_path, gpu_ids=cuda_device if cuda_device else 'all')
 
     run_cmd = f'accelerate launch --config-file {tempfile_path} --num_cpu_threads_per_process={num_cpu_threads_per_process}' + ' --main_process_port=' + str(available_port)
