@@ -6,6 +6,8 @@ import json
 import random
 import tempfile
 
+default_configs = {}
+
 def update_config(tuning_config_path : str) -> None:
     """
     replace old keys with new keys
@@ -14,13 +16,13 @@ def update_config(tuning_config_path : str) -> None:
         "CUDA_VISIBLE_DEVICES" : "cuda_device",
         "PORT" : "port"
     }
-    with open(tuning_config_path, 'r') as f:
+    with open(tuning_config_path, 'r', encoding='utf-8') as f:
         tuning_config_new = json.load(f)
     for keys in keys_to_replace:
         if keys in tuning_config_new:
             tuning_config_new[keys_to_replace[keys]] = tuning_config_new[keys]
             del tuning_config_new[keys]
-    with open(tuning_config_path, 'w') as f:
+    with open(tuning_config_path, 'w', encoding='utf-8') as f:
         json.dump(tuning_config_new, f, indent=4)
 
 def create_log_tracker_config(template_path_to_read:str, project_name, dict_args:dict, force_generate:bool=True, args_to_remove:list = []):
@@ -38,7 +40,7 @@ def create_log_tracker_config(template_path_to_read:str, project_name, dict_args
         else:
             raise OSError("Template path does not exist : "+template_path_to_read)
     else:
-        with open(template_path_to_read, 'r') as f:
+        with open(template_path_to_read, 'r', encoding='utf-8') as f:
             template = f.read()
     merged_string = f"{project_name}_"+"_".join([f"{key}={value}" for key, value in dict_args.items() if key not in args_to_remove]) + "_" + generate_random_string()
     new_template = template.format(
@@ -63,6 +65,7 @@ def generate_config(**modified_kwargs) -> dict:
     modified_kwargs: dict of key, value pairs to be modified from default_configs
     If value is empty string or None, it will not be modified.
     """
+    global default_configs
     copied_config = default_configs.copy()
     for key, value in modified_kwargs.items():
         if key not in default_configs:
@@ -116,7 +119,7 @@ def load_default_config(config_path:str):
         'wandb_api_key' : '',
     }
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             default_configs_loaded = json.load(f)
     except (FileNotFoundError):
         print(f"Couldn't load config file at {config_path}")
@@ -185,7 +188,7 @@ def load_tuning_config(config_path:str):
     }
     update_config(config_path)
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             tuning_config_loaded = json.load(f)
     except FileNotFoundError:
         print("Couldn't load config file")
