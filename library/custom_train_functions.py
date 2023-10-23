@@ -498,7 +498,7 @@ def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_lo
     """
     mask_imgs = []
     for images in batch['mask']:
-        if not images:
+        if images is None:
             mask_imgs.append(torch.ones(noise_pred.size()[-2:]))
         else:
             mask_imgs.append(images.unsqueeze(0).unsqueeze(0))
