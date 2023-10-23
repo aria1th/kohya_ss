@@ -160,6 +160,8 @@ class ImageInfo:
         # assert mask path
         if self.mask_path is not None:
             assert os.path.exists(self.mask_path), f"mask path {self.mask_path} does not exist for image {self.image_key} but specified"
+        else:
+            print(f"Mask path is specified as {self.mask_path} for image {self.image_key}.")
         self.mask: Optional[torch.Tensor] = None # mask is a tensor of shape (1, 1, H, W)
 
 
@@ -1097,11 +1099,12 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_outputs1_list = []
         text_encoder_outputs2_list = []
         text_encoder_pool2_list = []
-
+        mask_images = []
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
             image_info = self.image_data[image_key]
             subset = self.image_to_subset[image_key]
             loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
+            mask_images.append(image_info.mask_image)
 
             flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
 
@@ -1258,6 +1261,7 @@ class BaseDataset(torch.utils.data.Dataset):
         else:
             images = None
         example["images"] = images
+        example['mask'] = mask_images
 
         example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
         example["captions"] = captions

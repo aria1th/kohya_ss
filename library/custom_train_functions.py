@@ -496,7 +496,7 @@ def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_lo
     
     @return: noise_pred, target
     """
-    mask_imgs = [mask_img.unsqueeze(0).unsqueeze(0) for mask_img in batch['mask_imgs']]
+    mask_imgs = [mask_img.unsqueeze(0).unsqueeze(0) if mask_img else torch.ones(noise_pred.size()[-2:]) for mask_img in batch['mask_imgs']]
     # interpolate
     mask_imgs = [F.interpolate(mask_img, noise_pred.size()[-2:], mode='bilinear') for mask_img in mask_imgs]
     # to Tensor
