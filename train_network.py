@@ -811,7 +811,7 @@ class NetworkTrainer:
                         target = noise
                         
                     if args.mask_loss:
-                        noise_pred, target = apply_mask_loss(noise_pred, target, batch["mask"], args.mask_loss_weight)
+                        noise_pred, target = apply_mask_loss(noise_pred, target, batch, args.mask_loss_weight)
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
                     loss = loss.mean([1, 2, 3])
