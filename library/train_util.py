@@ -1472,6 +1472,7 @@ class DreamBoothDataset(BaseDataset):
             mask_dir = subset.mask_dir
             if mask_dir is not None:
                 print(f"mask_dir is set to {mask_dir} / mask_dirが設定されています: {mask_dir}")
+            any_mask_found = False
             for img_path, caption in zip(img_paths, captions): # TODO : add mask path here, mask path is directory to use to search matching mask file
                 info = ImageInfo(img_path, subset.num_repeats, caption, subset.is_reg, img_path)
                 if mask_dir:
@@ -1480,6 +1481,14 @@ class DreamBoothDataset(BaseDataset):
                     # load image and register to info.mask
                     if mask_corresponding_path:
                         info.mask = load_image(mask_corresponding_path)
+                        # convert to grayscale then divide by 255
+                        mask_image = Image.fromarray(info.mask).convert('L')
+                        mask_image = np.array(mask_image)
+                        mask_image = mask_image / 255
+                        info.mask = mask_image
+                        any_mask_found = True
+                        
+                    
                 if subset.is_reg:
                     reg_infos.append(info)
                 else:
@@ -1487,6 +1496,8 @@ class DreamBoothDataset(BaseDataset):
 
             subset.img_count = len(img_paths)
             self.subsets.append(subset)
+        if mask_dir and not any_mask_found:
+            raise ValueError(f"No corresponding mask found in {mask_dir} / マスクが見つかりませんでした: {mask_dir}")
 
         print(f"{num_train_images} train images with repeating.")
         self.num_train_images = num_train_images
@@ -2181,15 +2192,18 @@ def load_arbitrary_dataset(args, tokenizer) -> MinimalDataset:
 
 def load_image(image_path):
     image = Image.open(image_path)
+    image = handle_rgba(image)
+    img = np.array(image, np.uint8)
+    return img
+
+def handle_rgba(image):
     if not image.mode == "RGB":
         # if RGBA, transparent area should be white
         if image.mode == "RGBA":
             image = Image.alpha_composite(Image.new("RGB", image.size, (255, 255, 255)), image)
         else:
             image = image.convert("RGB") # RGBA -> RGB
-    img = np.array(image, np.uint8)
-    return img
-
+    return image
 
 # 画像を読み込む。戻り値はnumpy.ndarray,(original width, original height),(crop left, crop top, crop right, crop bottom)
 def trim_and_resize_if_required(
@@ -4672,7 +4686,7 @@ def sample_images_common(
                     negative_prompt = negative_prompt.replace(prompt_replacement[0], prompt_replacement[1])
 
             if controlnet_image is not None:
-                controlnet_image = Image.open(controlnet_image).convert("RGB")
+                controlnet_image = handle_rgba(Image.open(controlnet_image))
                 controlnet_image = controlnet_image.resize((width, height), Image.LANCZOS)
 
             height = max(64, height - height % 8)  # round to divisible by 8
@@ -4751,7 +4765,7 @@ class ImageLoadingDataset(torch.utils.data.Dataset):
         img_path = self.images[idx]
 
         try:
-            image = Image.open(img_path).convert("RGB")
+            image = handle_rgba(Image.open(img_path))
             # convert to tensor temporarily so dataloader will accept it
             tensor_pil = transforms.functional.pil_to_tensor(image)
         except Exception as e:

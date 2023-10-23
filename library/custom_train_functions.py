@@ -485,13 +485,14 @@ def apply_noise_offset(latents, noise, noise_offset, adaptive_noise_scale):
     noise = noise + noise_offset * torch.randn((latents.shape[0], latents.shape[1], 1, 1), device=latents.device)
     return noise
 
-def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch) -> Tuple[torch.Tensor, torch.Tensor]:
+def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_loss_weight:float) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Apply mask to noise_pred and target.
     
     @param noise_pred: noise prediction tensor
     @param target: target tensor
     @param batch: batch data
+    @param mask_loss_weight: mask loss weight
     
     @return: noise_pred, target
     """
@@ -503,8 +504,9 @@ def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch) -> Tupl
     #print("mask_imgs size: ", mask_imgs[0].size()) # debug
     # multiply mask to noise_pred and target
     # element-wise multiplication
-    noise_pred = noise_pred * mask_imgs
-    target = target * mask_imgs
+    #noise_pred = noise_pred * (mask_imgs * mask_loss_weight) + (1 - mask_loss_weight) * noise_pred
+    noise_pred = noise_pred * (mask_imgs * mask_loss_weight + 1 - mask_loss_weight)
+    target = target * (mask_imgs * mask_loss_weight + 1 - mask_loss_weight)
     return noise_pred, target
 
 """
