@@ -124,8 +124,9 @@ def search_mask(image_path:str, mask_dir:str) -> Optional[str]:
     
     Supported extensions : png, jpg, jpen, webp and its capital letters.
     """
-    name_without_ext = os.path.splitext(os.path.basename(image_path))[0]
-    mask_re = re.compile(f"{name_without_ext}(_[^_]+)?_mask\.(png|jpg|jpeg|webp|PNG|JPG|JPEG|WEBP)") # mask file name pattern
+    parent, neat_path = os.path.split(image_path)
+    name_without_ext = os.path.splitext(neat_path)[0] #re.compile(f"{name}(_[^_]+)?_mask\.(png|jpg)$")
+    mask_re = re.compile(f"{name_without_ext}(_[^_]+)?_mask\.(png|jpg|jpeg|webp|PNG|JPG|JPEG|WEBP)$") # mask file name pattern
     mask_path = None
     for mask_file in os.listdir(mask_dir):
         if mask_re.match(mask_file):
@@ -160,8 +161,9 @@ class ImageInfo:
         # assert mask path
         if self.mask_path is not None:
             assert os.path.exists(self.mask_path), f"mask path {self.mask_path} does not exist for image {self.image_key} but specified"
-        else:
             print(f"Mask path is specified as {self.mask_path} for image {self.image_key}.")
+        else:
+            print(f"Mask path is not specified for image {self.image_key}.")
         self.mask: Optional[torch.Tensor] = None # mask is a tensor of shape (1, 1, H, W)
 
 
@@ -1501,7 +1503,7 @@ class DreamBoothDataset(BaseDataset):
             subset.img_count = len(img_paths)
             self.subsets.append(subset)
         if mask_dir and not any_mask_found:
-            raise ValueError(f"No corresponding mask found in {mask_dir} / マスクが見つかりませんでした: {mask_dir}")
+            raise RuntimeError(f"No corresponding mask found in {mask_dir} / マスクが見つかりませんでした: {mask_dir}")
 
         print(f"{num_train_images} train images with repeating.")
         self.num_train_images = num_train_images
