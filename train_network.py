@@ -46,7 +46,8 @@ from library.custom_train_functions import (
     prepare_scheduler_for_custom_training,
     scale_v_prediction_loss_like_noise_prediction,
     add_v_prediction_like_loss,
-    apply_gor_loss_precalculated
+    apply_gor_loss_precalculated,
+    apply_mask_loss
 )
 from library.group_orthogonalization_normalization import (
     precalculate_modules_to_check
@@ -171,7 +172,7 @@ class NetworkTrainer:
                         "datasets": [
                             {
                                 "subsets": config_util.generate_dreambooth_subsets_config_by_subdirs(
-                                    args.train_data_dir, args.reg_data_dir
+                                    args.train_data_dir, args.reg_data_dir,mask_dir=args.mask_dir
                                 )
                             }
                         ]
@@ -185,12 +186,12 @@ class NetworkTrainer:
                                     {
                                         "image_dir": args.train_data_dir,
                                         "metadata_file": args.in_json,
+                                        "mask_dir": args.mask_dir,
                                     }
                                 ]
                             }
                         ]
                     }
-
             blueprint = blueprint_generator.generate(user_config, args, tokenizer=tokenizer)
             train_dataset_group = config_util.generate_dataset_group_by_blueprint(blueprint.dataset_group)
         else:
@@ -625,7 +626,6 @@ class NetworkTrainer:
             ), f"There should be a single dataset but {len(train_dataset_group.datasets)} found. This seems to be a bug. / データセットは1個だけ存在するはずですが、実際には{len(train_dataset_group.datasets)}個でした。プログラムのバグかもしれません。"
 
             dataset = train_dataset_group.datasets[0]
-
             dataset_dirs_info = {}
             reg_dataset_dirs_info = {}
             if use_dreambooth_method:
@@ -809,6 +809,9 @@ class NetworkTrainer:
                         target = noise_scheduler.get_velocity(latents, noise, timesteps)
                     else:
                         target = noise
+                        
+                    if args.mask_loss:
+                        noise_pred, target = apply_mask_loss(noise_pred, target, batch, args.mask_loss_weight)
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
                     loss = loss.mean([1, 2, 3])
@@ -946,6 +949,11 @@ def add_gor_args(parser: argparse.ArgumentParser)-> None:
     parser.add_argument("--gor_ortho_decay", type=float, default=1e-6, help="decay for group orthogonality regularization")
     # whether to enable gor_regularization
     parser.add_argument("--gor_regularization", type=bool, default=False, help="whether to enable group orthogonality regularization")
+    
+def add_mask_args(parser: argparse.ArgumentParser)-> None:
+    parser.add_argument("--mask_loss", type=bool, default=False, help="whether to enable mask loss")
+    parser.add_argument("--mask_loss_weight", type=float, default=1.0, help="weight for mask loss, 1.0 means mask will fully mask the loss")
+    parser.add_argument("--mask_path", type=str, default=None, help="Directory that contains masks corresponding to the images in the dataset. The mask images should follow <name>_something_mask.fileext.")
 
 def setup_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
@@ -1028,6 +1036,7 @@ def setup_parser() -> argparse.ArgumentParser:
         help="do not use fp16/bf16 VAE in mixed precision (use float VAE) / mixed precisionでも fp16/bf16 VAEを使わずfloat VAEを使う",
     )
     add_gor_args(parser)
+    add_mask_args(parser)
 
     return parser
 

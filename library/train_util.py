@@ -114,10 +114,29 @@ IMAGE_TRANSFORMS = transforms.Compose(
 
 TEXT_ENCODER_OUTPUTS_CACHE_SUFFIX = "_te_outputs.npz"
 
+def search_mask(image_path:str, mask_dir:str) -> Optional[str]:
+    """
+    Search mask file for the image.
+    image path is full path to image. (/data/.../image.jpg or .png or some extensions)
+    in mask_dir, we will find <filename>_<something>_mask.<allowed_extensions>
+    it matches a_mask.png, a_something_mask.png, a_some_long_string_mask.png, etc.
+    If multiple files are matched, it will return the first one.
+    
+    Supported extensions : png, jpg, jpen, webp and its capital letters.
+    """
+    parent, neat_path = os.path.split(image_path)
+    name_without_ext = os.path.splitext(neat_path)[0] #re.compile(f"{name}(_[^_]+)?_mask\.(png|jpg)$")
+    mask_re = re.compile(f"{name_without_ext}(_[^_]+)?_mask\.(png|jpg|jpeg|webp|PNG|JPG|JPEG|WEBP)$") # mask file name pattern
+    mask_path = None
+    for mask_file in os.listdir(mask_dir):
+        if mask_re.match(mask_file):
+            mask_path = os.path.join(mask_dir, mask_file)
+            break
+    return mask_path
 
 class ImageInfo:
     def __init__(self, image_key: str, num_repeats: int, caption: str, is_reg: bool, absolute_path: str) -> None:
-        self.image_key: str = image_key
+        self.image_key: str = image_key # image_key is a unique key for each image
         self.num_repeats: int = num_repeats
         self.caption: str = caption
         self.is_reg: bool = is_reg
@@ -137,6 +156,15 @@ class ImageInfo:
         self.text_encoder_outputs1: Optional[torch.Tensor] = None
         self.text_encoder_outputs2: Optional[torch.Tensor] = None
         self.text_encoder_pool2: Optional[torch.Tensor] = None
+        # mask informations, optional
+        self.mask_path: Optional[str] = None
+        # assert mask path
+        if self.mask_path is not None:
+            assert os.path.exists(self.mask_path), f"mask path {self.mask_path} does not exist for image {self.image_key} but specified"
+            print(f"Mask path is specified as {self.mask_path} for image {self.image_key}.")
+        else:
+            print(f"Mask path is not specified for image {self.image_key}.")
+        self.mask: Optional[torch.Tensor] = None # mask is a tensor of shape (1, 1, H, W)
 
 
 class BucketManager:
@@ -346,6 +374,7 @@ class BaseSubset:
         caption_suffix: Optional[str],
         token_warmup_min: int,
         token_warmup_step: Union[float, int],
+        mask_dir: Optional[str] = None,
     ) -> None:
         self.image_dir = image_dir
         self.num_repeats = num_repeats
@@ -363,6 +392,8 @@ class BaseSubset:
 
         self.token_warmup_min = token_warmup_min  # step=0におけるタグの数
         self.token_warmup_step = token_warmup_step  # N（N<1ならN*max_train_steps）ステップ目でタグの数が最大になる
+        
+        self.mask_dir = mask_dir    # mask directory that is used for training
 
         self.img_count = 0
 
@@ -388,6 +419,7 @@ class DreamBoothSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        mask_dir: Optional[str] = None,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -407,6 +439,7 @@ class DreamBoothSubset(BaseSubset):
             caption_suffix,
             token_warmup_min,
             token_warmup_step,
+            mask_dir=mask_dir,
         )
 
         self.is_reg = is_reg
@@ -440,6 +473,7 @@ class FineTuningSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        mask_dir: Optional[str] = None,
     ) -> None:
         assert metadata_file is not None, "metadata_file must be specified / metadata_fileは指定が必須です"
 
@@ -459,6 +493,7 @@ class FineTuningSubset(BaseSubset):
             caption_suffix,
             token_warmup_min,
             token_warmup_step,
+            mask_dir=mask_dir,
         )
 
         self.metadata_file = metadata_file
@@ -489,6 +524,7 @@ class ControlNetSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        mask_dir: Optional[str] = None,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -508,6 +544,7 @@ class ControlNetSubset(BaseSubset):
             caption_suffix,
             token_warmup_min,
             token_warmup_step,
+            mask_dir=mask_dir,
         )
 
         self.conditioning_data_dir = conditioning_data_dir
@@ -974,11 +1011,16 @@ class BaseDataset(torch.utils.data.Dataset):
         return image.size
 
     def load_image_with_face_info(self, subset: BaseSubset, image_path: str):
+        """
+        画像を読み込み、顔の位置情報を返す
+        Loads an image and returns face position information.
+        The image should have <filename>_cx_cy_w_h.jpg format for augmentation.
+        """
         img = load_image(image_path)
 
         face_cx = face_cy = face_w = face_h = 0
         if subset.face_crop_aug_range is not None:
-            tokens = os.path.splitext(os.path.basename(image_path))[0].split("_")
+            tokens = os.path.splitext(os.path.basename(image_path))[0].split("_") # example filename : aaaaaa_<face_cx>_<face_cy>_<face_w>_<face_h>.jpg
             if len(tokens) >= 5:
                 face_cx = int(tokens[-4])
                 face_cy = int(tokens[-3])
@@ -1059,11 +1101,12 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_outputs1_list = []
         text_encoder_outputs2_list = []
         text_encoder_pool2_list = []
-
+        mask_images = []
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
             image_info = self.image_data[image_key]
             subset = self.image_to_subset[image_key]
             loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
+            mask_images.append(image_info.mask)
 
             flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
 
@@ -1090,12 +1133,12 @@ class BaseDataset(torch.utils.data.Dataset):
                 img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, image_info.absolute_path)
                 im_h, im_w = img.shape[0:2]
 
-                if self.enable_bucket:
+                if self.enable_bucket: # bucketingを有効にしている場合は、画像サイズをbucketに合わせる
                     img, original_size, crop_ltrb = trim_and_resize_if_required(
                         subset.random_crop, img, image_info.bucket_reso, image_info.resized_size
                     )
                 else:
-                    if face_cx > 0:  # 顔位置情報あり
+                    if face_cx > 0:  # 顔位置情報あり Note : it won't work if image didn't have face info as filename_face_cx_cy_w_h.jpg
                         img = self.crop_target(subset, img, face_cx, face_cy, face_w, face_h)
                     elif im_h > self.height or im_w > self.width:
                         assert (
@@ -1220,6 +1263,7 @@ class BaseDataset(torch.utils.data.Dataset):
         else:
             images = None
         example["images"] = images
+        example['mask'] = mask_images
 
         example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
         example["captions"] = captions
@@ -1430,9 +1474,27 @@ class DreamBoothDataset(BaseDataset):
                 num_reg_images += subset.num_repeats * len(img_paths)
             else:
                 num_train_images += subset.num_repeats * len(img_paths)
-
-            for img_path, caption in zip(img_paths, captions):
+                
+            mask_dir = subset.mask_dir
+            if mask_dir is not None:
+                print(f"mask_dir is set to {mask_dir} / mask_dirが設定されています: {mask_dir}")
+            any_mask_found = False
+            for img_path, caption in zip(img_paths, captions): # TODO : add mask path here, mask path is directory to use to search matching mask file
                 info = ImageInfo(img_path, subset.num_repeats, caption, subset.is_reg, img_path)
+                if mask_dir:
+                    mask_corresponding_path = search_mask(image_path=img_path, mask_dir=mask_dir)
+                    info.mask_path = mask_corresponding_path
+                    # load image and register to info.mask
+                    if mask_corresponding_path:
+                        info.mask = load_image(mask_corresponding_path)
+                        # convert to grayscale then divide by 255
+                        mask_image = Image.fromarray(info.mask).convert('L')
+                        mask_image = np.array(mask_image)
+                        mask_image = mask_image / 255
+                        info.mask = mask_image
+                        any_mask_found = True
+                        
+                    
                 if subset.is_reg:
                     reg_infos.append(info)
                 else:
@@ -1440,6 +1502,8 @@ class DreamBoothDataset(BaseDataset):
 
             subset.img_count = len(img_paths)
             self.subsets.append(subset)
+        if mask_dir and not any_mask_found:
+            raise RuntimeError(f"No corresponding mask found in {mask_dir} / マスクが見つかりませんでした: {mask_dir}")
 
         print(f"{num_train_images} train images with repeating.")
         self.num_train_images = num_train_images
@@ -2134,16 +2198,31 @@ def load_arbitrary_dataset(args, tokenizer) -> MinimalDataset:
 
 def load_image(image_path):
     image = Image.open(image_path)
-    if not image.mode == "RGB":
-        image = image.convert("RGB")
+    image = handle_rgba(image)
     img = np.array(image, np.uint8)
     return img
 
+def handle_rgba(image):
+    if not image.mode == "RGB":
+        # if RGBA, transparent area should be white
+        if image.mode == "RGBA":
+            image = Image.alpha_composite(Image.new("RGB", image.size, (255, 255, 255)), image)
+        else:
+            image = image.convert("RGB") # RGBA -> RGB
+    return image
 
 # 画像を読み込む。戻り値はnumpy.ndarray,(original width, original height),(crop left, crop top, crop right, crop bottom)
 def trim_and_resize_if_required(
     random_crop: bool, image: Image.Image, reso, resized_size: Tuple[int, int]
 ) -> Tuple[np.ndarray, Tuple[int, int], Tuple[int, int, int, int]]:
+    """
+    @param random_crop: if True, crop randomly. if False, crop center.
+    @param image: PIL Image
+    @param reso: (width, height)
+    @param resized_size: (width, height)
+    
+    @return: image, original_size, crop_ltrb
+    """
     image_height, image_width = image.shape[0:2]
     original_size = (image_width, image_height)  # size before resize
 
@@ -2152,8 +2231,8 @@ def trim_and_resize_if_required(
         image = cv2.resize(image, resized_size, interpolation=cv2.INTER_AREA)  # INTER_AREAでやりたいのでcv2でリサイズ
 
     image_height, image_width = image.shape[0:2]
-
-    if image_width > reso[0]:
+    # Note : random crop won't work if image is smaller than resoluion
+    if image_width > reso[0]: # 画像が大きい場合はトリムする / trim if image is large
         trim_size = image_width - reso[0]
         p = trim_size // 2 if not random_crop else random.randint(0, trim_size)
         # print("w", trim_size, p)
@@ -4613,7 +4692,7 @@ def sample_images_common(
                     negative_prompt = negative_prompt.replace(prompt_replacement[0], prompt_replacement[1])
 
             if controlnet_image is not None:
-                controlnet_image = Image.open(controlnet_image).convert("RGB")
+                controlnet_image = handle_rgba(Image.open(controlnet_image))
                 controlnet_image = controlnet_image.resize((width, height), Image.LANCZOS)
 
             height = max(64, height - height % 8)  # round to divisible by 8
@@ -4692,7 +4771,7 @@ class ImageLoadingDataset(torch.utils.data.Dataset):
         img_path = self.images[idx]
 
         try:
-            image = Image.open(img_path).convert("RGB")
+            image = handle_rgba(Image.open(img_path))
             # convert to tensor temporarily so dataloader will accept it
             tensor_pil = transforms.functional.pil_to_tensor(image)
         except Exception as e:
