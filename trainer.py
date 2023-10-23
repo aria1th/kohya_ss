@@ -485,7 +485,10 @@ def add_extra_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--v2', type=str, default=False, help='Is sd2 for the project (default: False)')
   # v_parameterization
   parser.add_argument('--v_parameterization', type=str, default=False, help='V parameterization for the project (default: False)')
-  return ['zero_terminal_snr', 'v2', 'v_parameterization']
+  # mask_loss and mask_dir
+  parser.add_argument('--mask_loss', type=str, default=False, help='Mask loss for the project (default: False)')
+  parser.add_argument('--mask_dir', type=str, default='', help='Mask dir for the project (default: "")')
+  return ['zero_terminal_snr', 'v2', 'v_parameterization', 'mask_loss', 'mask_dir']
 
 def add_optimizer_args(parser : argparse.ArgumentParser) -> List[str]:
   """
