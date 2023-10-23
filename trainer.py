@@ -153,6 +153,9 @@ def create_config():
   with open(accelerate_config_file, 'r') as configfile:
     config_json = json.load(configfile)
     config_json["main_process_port"] = new_port_num
+    config_json["same_network"] = True
+    config_json["gpu_ids"] = args.cuda_device
+    config_json["num_processes"] = 1 if not args.cuda_device else len(args.cuda_device.split(','))
   with open(accelerate_config_file, 'w') as configfile:
     json.dump(config_json, configfile, indent=2)
   if resume:
@@ -578,7 +581,7 @@ if __name__ == "__main__":
     lbw_text_encoder_lr_mult = 1
   
   # TODO : separate validation, please clean up this mess
-  os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
+  #os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
   if args.target_path != '':
     print("Target path will be used as "+args.target_path)
   accelerate_executable_path = args.accelerate
