@@ -4,7 +4,7 @@ Util class to handle external WebUI calls
 import json
 import os
 import time
-from typing import Tuple
+from typing import Tuple, Dict, Any
 import re
 import uuid
 import numpy as np
@@ -43,8 +43,8 @@ def sample_images_external_webui(
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
     """
     # prompt file path can be .json file for webui
-    if not prompt_file_path.endswith(".json"):
-        return False, f"Invalid prompt file path. Must end with .json, got {prompt_file_path}"
+    if not prompt_file_path.endswith(".json") and not prompt_file_path.endswith(".txt"):
+        return False, f"Invalid prompt file path. Must end with .json or .txt, got {prompt_file_path}"
     if not webui_url.endswith('/sdapi/v1'):
         # first split by /, then remove last element, then join back
         if webui_url.endswith('/'):
@@ -140,13 +140,16 @@ def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
     """
     def remove_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
         response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
+        return response
     # submit thread
+    response_text = ""
     if not should_sync:
         get_thread_pool_executor().submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
     else:
         # directly execute the function
-        remove_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
-    return True, ""
+        response = remove_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
+        response_text = response.text if response is not None else ""
+    return True, response_text
 
 
     
@@ -183,8 +186,87 @@ def log_wandb(
                 logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt}"),
             }
         )
-    except:  # wandb 無効時
+    except:  # wandb 無効時 # pylint: disable=bare-except
         pass
+
+def parse_text(text_line:str) -> Dict[str, Any]:
+    """
+    Parse text line to json.
+    see Available Options (--n, etc)
+    
+    example:
+    1girl --n worst quality --d 42 --s 25 --w 512 --h 768 --l 7.5
+    -> {
+        'prompt' : '1girl',
+        'negative_prompt' : 'worst quality',
+        'seed' : 42,
+        'step' : 25,
+        'width' : 512,
+        'height' : 768,
+        'cfg_scale' : 7.5
+    }
+    
+    if arguments are not specified or found, it will be ignored.
+    """
+    # Split the text line into prompt and arguments
+    prompt, *args = text_line.split('--')
+    prompt = prompt.strip().split(',')
+    
+    # Initialize an empty dictionary to store parsed arguments
+    parsed_args_dict = {}
+    
+    # Manually parse the arguments
+    for arg in args:
+        key, value = arg.strip().split(' ', 1)
+        if key == 'n':
+            parsed_args_dict['negative_prompt'] = value
+        elif key == 'd':
+            parsed_args_dict['seed'] = int(value)
+        elif key == 's':
+            parsed_args_dict['step'] = int(value)
+        elif key == 'w':
+            parsed_args_dict['width'] = int(value)
+        elif key == 'h':
+            parsed_args_dict['height'] = int(value)
+        elif key == 'l':
+            parsed_args_dict['cfg_scale'] = float(value)
+    
+    # Add the prompt to the dictionary
+    parsed_args_dict['prompt'] = ', '.join(prompt)
+    return parsed_args_dict
+    
+def handle_txt_prompt(prompt_file_path:str):
+    """
+    Handle txt prompt file. Returns list of prompts json that can be used for webuiapi.
+    Text file should not contain lora regex, it will be added automatically.
+    Other lora does not matters.
+    Available options :
+        --n : negative_prompt
+        --d : seed
+        --s : step
+        --w : width
+        --h : height
+        --l : cfg scale
+    """
+    if not prompt_file_path.endswith(".txt"):
+        raise ValueError(f"Invalid prompt file path. Must end with .txt, got {prompt_file_path}")
+    elif not os.path.exists(prompt_file_path):
+        raise FileNotFoundError(f"Prompt file does not exist: {prompt_file_path}")
+    prompts = []
+    # prompt dict : {'prompt':prompt_with_regex_added, 'negative_prompt':negative_prompt, 'seed':seed, 'step':step, 'width':width, 'height':height, 'cfg_scale':cfg_scale}
+    # prompt_with_regex_added : prompt + <lora:{lora_name_2}:1>
+    # regex_to_replace : {lora_name_2}
+    with open(prompt_file_path, 'r', encoding='utf-8') as prompt_file:
+        for line in prompt_file.readlines():
+            line = line.strip()
+            if not line:
+                continue
+            prompt_dict = parse_text(line) # parse text to json
+            assert isinstance(prompt_dict, dict), f"Invalid prompt format. Must be a dict, got {prompt_dict}"
+            prompt_dict['regex_to_replace'] = "{lora_name_2}"
+            prompt_dict["prompt"] = prompt_dict["prompt"] + " <lora:{lora_name_2}:1>"
+            prompts.append(prompt_dict)
+    return prompts
 
 def request_sample(
         prompt_file_path:str,
@@ -197,7 +279,7 @@ def request_sample(
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. This function is thread-locking. 
-    Prompt file should be a json file that can be parsed for webuiapi.
+    Prompt file should be a json(or txt) file that can be parsed for webuiapi.
     real 'prompts' and 'negative prompt' should contain regex_to_replace, which will be replaced with ckpt_name.
     
     example prompt:
@@ -209,6 +291,8 @@ def request_sample(
     if prompt_file_path.endswith(".json"):
         with open(prompt_file_path, "r", encoding="utf-8") as f:
             prompts = json.load(f)
+    elif prompt_file_path.endswith(".txt"):
+        prompts = handle_txt_prompt(prompt_file_path)
     if not isinstance(prompts, list):
         prompts = [prompts] # convert to list if not list
     os.makedirs(output_dir_path, exist_ok=True)
