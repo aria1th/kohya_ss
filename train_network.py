@@ -950,7 +950,7 @@ class NetworkTrainer:
 
             print("model saved.")
             
-        wait_until_finished() # wait for inference to finish if required
+        # wait_until_finished() # wait for inference to finish if required
 
 def add_gor_args(parser: argparse.ArgumentParser)-> None:
     # required args : gor_num_groups : int, gor_regularization_type: str, gor_name_to_regularize: str, gor_regularize_fc_layers: bool, gor_ortho_decay: float
