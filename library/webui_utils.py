@@ -59,6 +59,7 @@ def sample_images_external_webui(
             return False, f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}"
         webui_instance.set_auth(*webui_auth.split(':'))
     ping_response = ping_webui(webui_instance)
+    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
     if ping_response is None:
         return False, f"WebUI at {webui_url} is not reachable"
     # now upload, request samples, and download results, then remove uploaded files
@@ -68,6 +69,7 @@ def sample_images_external_webui(
     upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload, should_sync=should_sync)
     if not upload_success:
         return False, message
+    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
     assert_lora(webui_instance, ckpt_name, ckpt_name_to_upload, should_sync=should_sync) # assert lora exists
     # remove extension
@@ -87,6 +89,7 @@ def sample_images_external_webui(
     msg = message + msg
     if not sample_success:
         return False, msg
+    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
     remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload, should_sync=should_sync)
     msg += msg_remove
     if not remove_success:
