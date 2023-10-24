@@ -2206,7 +2206,9 @@ def handle_rgba(image):
     if not image.mode == "RGB":
         # if RGBA, transparent area should be white
         if image.mode == "RGBA":
-            image = Image.alpha_composite(Image.new("RGB", image.size, (255, 255, 255)), image)
+            white_background = Image.new("RGB", image.size, (255, 255, 255))
+            white_background.paste(image, mask=image.split()[3])
+            image = white_background
         else:
             image = image.convert("RGB") # RGBA -> RGB
     return image
