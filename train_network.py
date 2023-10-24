@@ -20,8 +20,15 @@ try:
         from library.ipex import ipex_init
 
         ipex_init()
-except Exception:
+        # can throw RuntimeError if IPEX is not available, or ImportError if IPEX is not installed or ModuleNotFoundError if IPEX is not installed
+except Exception: # noqa E722
     pass
+
+try:
+    from setproctitle import setproctitle
+except (ImportError, ModuleNotFoundError):
+    setproctitle = lambda x: None # does nothing
+
 from accelerate.utils import set_seed
 from diffusers import DDPMScheduler
 from library import model_util
@@ -1035,6 +1042,14 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not use fp16/bf16 VAE in mixed precision (use float VAE) / mixed precisionでも fp16/bf16 VAEを使わずfloat VAEを使う",
     )
+    
+    # setproctitle if available
+    parser.add_argument(
+        "--process_title",
+        type=str,
+        default=None,
+        help="set process title if available / もし可能ならプロセス名を設定する",
+    )
     add_gor_args(parser)
     add_mask_args(parser)
 
@@ -1046,6 +1061,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args = train_util.read_config_from_file(args, parser)
+    if args.process_title is not None:
+        setproctitle(args.process_title) # set process title if available, if import has failed, do nothing
 
     trainer = NetworkTrainer()
     trainer.train(args)
