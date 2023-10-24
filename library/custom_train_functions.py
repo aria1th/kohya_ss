@@ -485,14 +485,15 @@ def apply_noise_offset(latents, noise, noise_offset, adaptive_noise_scale):
     noise = noise + noise_offset * torch.randn((latents.shape[0], latents.shape[1], 1, 1), device=latents.device)
     return noise
 
-def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_loss_weight:float) -> Tuple[torch.Tensor, torch.Tensor]:
+def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_loss_weight:float=1, mask_threshold:float=1) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Apply mask to noise_pred and target.
     
     @param noise_pred: noise prediction tensor
     @param target: target tensor
     @param batch: batch data
-    @param mask_loss_weight: mask loss weight
+    @param mask_loss_weight: mask loss weight, 0 means no mask loss
+    @param mask_threshold: mask threshold, all values upper than threshold are set to 1
     
     @return: noise_pred, target
     """
@@ -506,6 +507,10 @@ def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_lo
             mask_imgs.append(images.unsqueeze(0).unsqueeze(0))
     # interpolate
     mask_imgs = [F.interpolate(mask_img, noise_pred.size()[-2:], mode='bilinear') for mask_img in mask_imgs]
+    
+    if mask_threshold < 1:
+        # thresholding, all values upper than threshold are set to 1
+        mask_imgs = [torch.where(mask_img > mask_threshold, torch.ones_like(mask_img, device=noise_pred.device), mask_img) for mask_img in mask_imgs]
     # to Tensor
     mask_imgs = torch.cat(mask_imgs, dim=0) # [batch_size, 1, 256, 256]
     #print("mask_imgs size: ", mask_imgs[0].size()) # debug

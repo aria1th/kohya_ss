@@ -818,7 +818,8 @@ class NetworkTrainer:
                         target = noise
                         
                     if args.mask_loss:
-                        noise_pred, target = apply_mask_loss(noise_pred, target, batch, args.mask_loss_weight)
+                        # mask the noise_pred and target
+                        noise_pred, target = apply_mask_loss(noise_pred, target, batch, mask_loss_weight=args.mask_loss_weight, mask_threshold=args.mask_threshold)
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
                     loss = loss.mean([1, 2, 3])
@@ -960,6 +961,8 @@ def add_gor_args(parser: argparse.ArgumentParser)-> None:
 def add_mask_args(parser: argparse.ArgumentParser)-> None:
     parser.add_argument("--mask_loss", type=bool, default=False, help="whether to enable mask loss")
     parser.add_argument("--mask_loss_weight", type=float, default=1.0, help="weight for mask loss, 1.0 means mask will fully mask the loss")
+    # mask threshold
+    parser.add_argument("--mask_threshold", type=float, default=1, help="threshold for mask, all values upper than this will be converted to 1, useful for gaussian mask")
     parser.add_argument("--mask_path", type=str, default=None, help="Directory that contains masks corresponding to the images in the dataset. The mask images should follow <name>_something_mask.fileext.")
 
 def setup_parser() -> argparse.ArgumentParser:
