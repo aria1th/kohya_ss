@@ -903,8 +903,8 @@ class NetworkTrainer:
                     break
 
             if args.logging_dir is not None:
-                logs = {"loss/epoch": loss_total / len(loss_list)}
-                accelerator.log(logs, step=epoch + 1)
+                logs = {"loss/epoch": loss_total / len(loss_list), "epoch" : epoch + 1}
+                accelerator.log(logs, step=global_step) # log epoch loss, note that accelerate drops logs with invalid step
 
             accelerator.wait_for_everyone()
 
