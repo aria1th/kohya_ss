@@ -1486,6 +1486,7 @@ class DreamBoothDataset(BaseDataset):
                     info.mask_path = mask_corresponding_path
                     # load image and register to info.mask
                     if mask_corresponding_path:
+                        print(f"mask found at {mask_corresponding_path} / マスクが見つかりました: {mask_corresponding_path}")
                         info.mask = load_image(mask_corresponding_path)
                         # convert to grayscale then divide by 255
                         mask_image = Image.fromarray(info.mask).convert('L')
