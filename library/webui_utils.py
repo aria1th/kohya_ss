@@ -119,7 +119,6 @@ def sample_images_external_webui(
             return False, f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}"
         webui_instance.set_auth(*webui_auth.split(':'))
     ping_response = ping_webui(webui_instance)
-    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     if ping_response is None:
         accelerator.print(f"WebUI at {webui_url} is not reachable")
         return False, f"WebUI at {webui_url} is not reachable"
@@ -131,12 +130,11 @@ def sample_images_external_webui(
     if not upload_success:
         accelerator.print(message)
         return False, message
-    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     ckpt_name = filename_with_timestamp # checkpoint name
     _true, message_assertion = assert_lora(webui_instance, filename_with_timestamp, subdir) # assert lora exists
     # remove extension
     refresh_lora(webui_instance) # refresh lora to make sure it is up to date
-    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
+    sleep_task(3) # wait for 5 seconds to make sure lora is refreshed
     if '.' in ckpt_name:
         ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
     sample_success, msg = request_sample(
@@ -151,7 +149,6 @@ def sample_images_external_webui(
     if not sample_success:
         accelerator.print(msg)
         return False, msg
-    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', subdir)
     msg += msg_remove
     if not remove_success:
