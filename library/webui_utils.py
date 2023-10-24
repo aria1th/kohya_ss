@@ -149,8 +149,7 @@ def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str, should_
     def get_query_hash_lora(webui_instance:WebUIApi, subpath:str, filename:str):
         filename_candidate_1 = subpath + '/' + filename
         filename_candidate_2 = subpath + '\\' + filename
-        response = webui_instance.query_hash_loras()
-        response_json = response.json()
+        response_json = webui_instance.query_hash_loras()
         hashes_list = response_json['hashes']
         if filename_candidate_1 in hashes_list:
             return True, filename_candidate_1
