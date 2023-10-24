@@ -146,7 +146,8 @@ class NetworkTrainer:
         training_started_at = time.time()
         train_util.verify_training_args(args)
         train_util.prepare_dataset_args(args, True)
-
+        if args.process_title is not None:
+            setproctitle(args.process_title) # set process title if available, if import has failed, do nothing
         cache_latents = args.cache_latents
         use_dreambooth_method = args.in_json is None
         use_user_config = args.dataset_config is not None
@@ -1064,8 +1065,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args = train_util.read_config_from_file(args, parser)
-    if args.process_title is not None:
-        setproctitle(args.process_title) # set process title if available, if import has failed, do nothing
-
     trainer = NetworkTrainer()
     trainer.train(args)
