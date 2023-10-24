@@ -318,10 +318,13 @@ if __name__ == '__main__':
         if not temp_tuning_config.get('mask_loss', True):
             temp_tuning_config['mask_threshold'] = 0
         # this arguments will be used for overriding default configs
-        if str(temp_tuning_config) in sets_executed_args:
-            print(f"skipping {temp_tuning_config} because it is already executed")
+        config_without_log_tracker_config = temp_tuning_config.copy()
+        if 'log_tracker_config' in config_without_log_tracker_config:
+            del config_without_log_tracker_config['log_tracker_config']
+        if str(config_without_log_tracker_config) in sets_executed_args:
+            print(f"skipping {config_without_log_tracker_config} because it is already executed")
             continue # skip
-        sets_executed_args.add(str(temp_tuning_config))
+        sets_executed_args.add(str(config_without_log_tracker_config))
         config = generate_config(**temp_tuning_config,
                                 )
         # override args
