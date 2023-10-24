@@ -55,7 +55,8 @@ def wrap_sample_images_external_webui(
         webui_url:str,
         webui_auth:str=None,
         abs_ckpt_path:str="",
-        should_sync:bool=False
+        should_sync:bool=False,
+        steps:int=0,
     ) -> Tuple[bool, str]:
     """
     Wrapped version of sample_images_external_webui.
@@ -72,7 +73,8 @@ def wrap_sample_images_external_webui(
             accelerator,
             webui_url,
             webui_auth,
-            abs_ckpt_path
+            abs_ckpt_path,
+            steps=steps
         )
     else:
         submit(sample_images_external_webui,
@@ -82,7 +84,8 @@ def wrap_sample_images_external_webui(
             accelerator,
             webui_url,
             webui_auth,
-            abs_ckpt_path
+            abs_ckpt_path,
+            steps=steps
         )
         return True, "Sample request submitted to thread pool executor\n"
     
@@ -93,7 +96,8 @@ def sample_images_external_webui(
         accelerator:Accelerator,
         webui_url:str,
         webui_auth:str=None,
-        abs_ckpt_path:str=""
+        abs_ckpt_path:str="",
+        steps:int=0,
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
@@ -143,7 +147,8 @@ def sample_images_external_webui(
         output_name,
         accelerator,
         webui_instance,
-        ckpt_name=ckpt_name
+        ckpt_name=ckpt_name,
+        steps=steps
     )
     msg = message + msg
     if not sample_success:
@@ -240,6 +245,7 @@ def log_wandb(
         prompt:str,
         negative_prompt:str,
         seed:int,
+        steps:int=0
     ):
     try:
         wandb_tracker = accelerator.get_tracker("wandb")
@@ -254,7 +260,8 @@ def log_wandb(
         wandb_tracker.log(
             {
                 logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt}"),
-            }
+            },
+            step=steps if steps > 0 else None
         )
     except:  # wandb 無効時 # pylint: disable=bare-except
         pass
@@ -344,7 +351,8 @@ def request_sample(
         output_name:str,
         accelerator:Accelerator,
         webui_instance:WebUIApi,
-        ckpt_name:str=""
+        ckpt_name:str="",
+        steps:int=0,
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. This function is thread-locking. 
@@ -438,7 +446,7 @@ def request_sample(
                 error_obj = RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
                 raise RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
-            log_wandb(accelerator, image, orig_prompt, negative_prompt, seed)
+            log_wandb(accelerator, image, orig_prompt, negative_prompt, seed, steps=steps)
         wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         any_success = True
     if not any_success:

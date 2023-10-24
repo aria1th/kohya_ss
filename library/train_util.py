@@ -4525,6 +4525,7 @@ def sample_images_common(
                                         args.webui_url,
                                         args.webui_auth,
                                         abs_ckpt_path=ckpt_saved_file,
+                                        steps=steps,
                                         should_sync=args.should_wait_webui_process) # sends file
         if message:
             print(message)
