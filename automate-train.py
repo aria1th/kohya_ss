@@ -299,8 +299,10 @@ if __name__ == '__main__':
     if tuning_config.get('project_name_base', 'BASE') != 'BASE':
         project_name_base = tuning_config['project_name_base']
     keys_to_remove = {'CUDA_VISIBLE_DEVICES', 'PORT'}
+    sets_executed_args = set() # set of executed args
     for args_prod in product(*list_arguments_name.values()):
         list_arguments = dict(zip(list_arguments_name.keys(), args_prod))
+        # check if this set of arguments is already executed with args_prod
         if template_path is not None:
             log_tracker_config_path = create_log_tracker_config(template_path, project_name_base, list_arguments, True, args_to_remove=singleton_args)
             list_arguments['log_tracker_config'] = log_tracker_config_path
@@ -312,8 +314,14 @@ if __name__ == '__main__':
             continue
         if temp_tuning_config.get('unet_lr', 1e-4) < temp_tuning_config.get('text_encoder_lr', 2e-5):
             continue
+        # if mask_loss is false, set mask_threshold to 0
+        if not temp_tuning_config.get('mask_loss', True):
+            temp_tuning_config['mask_threshold'] = 0
         # this arguments will be used for overriding default configs
-    
+        if str(temp_tuning_config) in sets_executed_args:
+            print(f"skipping {temp_tuning_config} because it is already executed")
+            continue # skip
+        sets_executed_args.add(str(temp_tuning_config))
         config = generate_config(**temp_tuning_config,
                                 )
         # override args
