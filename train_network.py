@@ -147,7 +147,11 @@ class NetworkTrainer:
         train_util.verify_training_args(args)
         train_util.prepare_dataset_args(args, True)
         if args.process_title is not None:
-            setproctitle(args.process_title) # set process title if available, if import has failed, do nothing
+            # attach python/ if not specified
+            if not args.process_title.startswith("python/"):
+                setproctitle("python/" + args.process_title)
+            else:
+                setproctitle(args.process_title) # set process title if available, if import has failed, do nothing
         cache_latents = args.cache_latents
         use_dreambooth_method = args.in_json is None
         use_user_config = args.dataset_config is not None
