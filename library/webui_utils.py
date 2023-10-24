@@ -9,24 +9,35 @@ import re
 import uuid
 import numpy as np
 from accelerate import Accelerator
-from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from library.webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
 from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
+from queue import Queue
 
+work_queue = Queue() #FIFO queue
+def work_queue_thread():
+    while True:
+        task = work_queue.get()
+        task()
+        work_queue.task_done()
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
-executor_thread_pool.submit(lambda: None) # start thread
+executor_thread_pool.submit(work_queue_thread)
     
+
 def get_thread_pool_executor() -> ThreadPoolExecutor:
     # check if thread pool is shutdown, if so, restart
     global executor_thread_pool
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
         executor_thread_pool = ThreadPoolExecutor(max_workers=1)
-        executor_thread_pool.submit(lambda: None)
+        executor_thread_pool.submit(work_queue_thread)
     # if thread pool is crashed, throw exception
     if executor_thread_pool._broken: # pylint: disable=protected-access
         raise RuntimeError("Thread pool is broken")
     return executor_thread_pool
+
+def submit(func, *args, **kwargs):
+    get_thread_pool_executor()
+    work_queue.put(lambda: func(*args, **kwargs))
         
 def wait_until_finished():
     # wait until all threads are finished
@@ -109,7 +120,7 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
     # submit thread
     response_text = ""
     if not should_sync:
-        get_thread_pool_executor().submit(upload_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
+        submit(upload_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
     else:
         # directly execute the function
         reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
@@ -118,7 +129,7 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
 
 def sleep_task(seconds:int, should_sync:bool = False):
     if not should_sync:
-        get_thread_pool_executor().submit(time.sleep, seconds)
+        submit(time.sleep, seconds)
     else:
         time.sleep(seconds)
 
@@ -133,7 +144,7 @@ def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[boo
     # submit thread
     response_text = ""
     if not should_sync:
-        get_thread_pool_executor().submit(refresh_thread, webui_instance)
+        submit(refresh_thread, webui_instance)
     else:
         # directly execute the function
         response = refresh_thread(webui_instance)
@@ -160,7 +171,7 @@ def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str, should_
             raise RuntimeError(f"File does not exist in webui: {filename}") # may crash ThreadPoolExecutor
     # submit thread
     if not should_sync:
-        future = get_thread_pool_executor().submit(get_query_hash_lora, webui_instance, subpath, ckpt_filename)
+        future = submit(get_query_hash_lora, webui_instance, subpath, ckpt_filename)
         return True, ""
     else:
         # directly execute the function
@@ -179,7 +190,7 @@ def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
     # submit thread
     response_text = ""
     if not should_sync:
-        get_thread_pool_executor().submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
+        submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
     else:
         # directly execute the function
         response = remove_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
@@ -414,7 +425,7 @@ def request_sample(
             # here directly execute the function
             wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         else:
-            get_thread_pool_executor().submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
+            submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         any_success = True
     if not any_success:
         return False, "No valid prompts found\n" + message
