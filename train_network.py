@@ -935,22 +935,19 @@ class NetworkTrainer:
 
         if is_main_process:
             network = accelerator.unwrap_model(network)
-
-        accelerator.end_training()
-
-        if is_main_process and args.save_state:
-            train_util.save_state_on_train_end(args, accelerator)
-
+            
+        wait_until_finished()
         if is_main_process:
             ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
             # if use_external_webui is True and (epoch + 1) == num_train_epochs, sample here
             if args.use_external_webui is True:
                 self.sample_images(accelerator, args, num_train_epochs, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
-
             print("model saved.")
-            
-        # wait_until_finished() # wait for inference to finish if required
+        accelerator.end_training()
+
+        if is_main_process and args.save_state:
+            train_util.save_state_on_train_end(args, accelerator)
 
 def add_gor_args(parser: argparse.ArgumentParser)-> None:
     # required args : gor_num_groups : int, gor_regularization_type: str, gor_name_to_regularize: str, gor_regularize_fc_layers: bool, gor_ortho_decay: float
