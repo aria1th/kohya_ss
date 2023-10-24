@@ -200,7 +200,7 @@ def parse_text(text_line:str) -> Dict[str, Any]:
         'prompt' : '1girl',
         'negative_prompt' : 'worst quality',
         'seed' : 42,
-        'step' : 25,
+        'steps' : 25,
         'width' : 512,
         'height' : 768,
         'cfg_scale' : 7.5
@@ -223,7 +223,7 @@ def parse_text(text_line:str) -> Dict[str, Any]:
         elif key == 'd':
             parsed_args_dict['seed'] = int(value)
         elif key == 's':
-            parsed_args_dict['step'] = int(value)
+            parsed_args_dict['steps'] = int(value)
         elif key == 'w':
             parsed_args_dict['width'] = int(value)
         elif key == 'h':
@@ -253,7 +253,7 @@ def handle_txt_prompt(prompt_file_path:str):
     elif not os.path.exists(prompt_file_path):
         raise FileNotFoundError(f"Prompt file does not exist: {prompt_file_path}")
     prompts = []
-    # prompt dict : {'prompt':prompt_with_regex_added, 'negative_prompt':negative_prompt, 'seed':seed, 'step':step, 'width':width, 'height':height, 'cfg_scale':cfg_scale}
+    # prompt dict : {'prompt':prompt_with_regex_added, 'negative_prompt':negative_prompt, 'seed':seed, 'steps':step, 'width':width, 'height':height, 'cfg_scale':cfg_scale}
     # prompt_with_regex_added : prompt + <lora:{lora_name_2}:1>
     # regex_to_replace : {lora_name_2}
     with open(prompt_file_path, 'r', encoding='utf-8') as prompt_file:
