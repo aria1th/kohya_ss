@@ -15,7 +15,15 @@ from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, 
 
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
 executor_thread_pool.submit(lambda: None) # submit dummy task to start thread
-    
+
+any_error_occurred = False # this is used to check if any error occurred in thread pool executor
+error_obj = None # this is used to store error object if any error occurred in thread pool executor
+
+def check_webui_state(): #throws exception if any error occurred in thread pool executor
+    global any_error_occurred
+    global error_obj
+    if any_error_occurred:
+        raise error_obj
 
 def get_thread_pool_executor() -> ThreadPoolExecutor:
     # check if thread pool is shutdown, if so, restart
@@ -191,10 +199,14 @@ def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str) -> Tupl
             return True, filename_candidate_2
         else:
             # if executed in thread, crash the thread
+            any_error_occurred = True
+            error_obj = RuntimeError(f"File does not exist in webui: {filename}")
             raise RuntimeError(f"File does not exist in webui: {filename}") # may crash ThreadPoolExecutor
     # submit thread
     exists, filename = get_query_hash_lora(webui_instance, subpath, ckpt_filename)
     if not exists:
+        any_error_occurred = True
+        error_obj = RuntimeError(f"File does not exist in webui: {filename}")
         raise RuntimeError(f"File does not exist in webui: {filename}")
     return True, filename
         
@@ -420,6 +432,8 @@ def request_sample(
             strftime = f"{time.strftime('%Y%m%d_%H%M%S')}"
             image = queued_task_result.get_image()
             if image is None:
+                any_error_occurred = True
+                error_obj = RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
                 raise RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
             log_wandb(accelerator, image, orig_prompt, negative_prompt, seed)

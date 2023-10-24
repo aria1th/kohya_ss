@@ -64,7 +64,7 @@ import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
 
-from library.webui_utils import wrap_sample_images_external_webui
+from library.webui_utils import wrap_sample_images_external_webui, check_webui_state
 
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
@@ -4486,6 +4486,7 @@ def sample_images_common(
     """
     StableDiffusionLongPromptWeightingPipelineの改造版を使うようにしたので、clip skipおよびプロンプトの重みづけに対応した
     """
+    check_webui_state() # throws exception if webui had an error
     if args.sample_every_n_steps is None and args.sample_every_n_epochs is None:
         return
     if args.sample_every_n_epochs is not None:
