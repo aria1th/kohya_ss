@@ -64,7 +64,7 @@ import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
 
-from library.webui_utils import sample_images_external_webui
+from library.webui_utils import wrap_sample_images_external_webui
 
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
@@ -4517,7 +4517,7 @@ def sample_images_common(
                     print("No checkpoint file found, generating images locally.")
                     ckpt_saved_file = None
                     return
-            request_success, message = sample_images_external_webui(args.sample_prompts,
+            request_success, message = wrap_sample_images_external_webui(args.sample_prompts,
                                         args.output_dir + "/sample",
                                         args.output_name,
                                         accelerator,

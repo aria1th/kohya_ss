@@ -42,6 +42,43 @@ def submit(func, *args, **kwargs):
 def wait_until_finished():
     # wait until all threads are finished
     executor_thread_pool.shutdown(wait=True)
+
+def wrap_sample_images_external_webui(
+        prompt_file_path:str,
+        output_dir_path:str,
+        output_name:str,
+        accelerator:Accelerator,
+        webui_url:str,
+        webui_auth:str=None,
+        abs_ckpt_path:str="",
+        should_sync:bool=False
+    ) -> Tuple[bool, str]:
+    """
+    Wrapped version of sample_images_external_webui.
+    If should_sync is true, it will directly call sample_images_external_webui.
+    If should_sync is false, it will submit the function to thread pool executor.
+    """
+    if should_sync:
+        return sample_images_external_webui(
+            prompt_file_path,
+            output_dir_path,
+            output_name,
+            accelerator,
+            webui_url,
+            webui_auth,
+            abs_ckpt_path
+        )
+    else:
+        submit(sample_images_external_webui,
+            prompt_file_path,
+            output_dir_path,
+            output_name,
+            accelerator,
+            webui_url,
+            webui_auth,
+            abs_ckpt_path
+        )
+        return True, "Sample request submitted to thread pool executor\n"
     
 def sample_images_external_webui(
         prompt_file_path:str,
@@ -50,8 +87,7 @@ def sample_images_external_webui(
         accelerator:Accelerator,
         webui_url:str,
         webui_auth:str=None,
-        abs_ckpt_path:str="",
-        should_sync:bool = False
+        abs_ckpt_path:str=""
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
@@ -70,22 +106,22 @@ def sample_images_external_webui(
             return False, f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}"
         webui_instance.set_auth(*webui_auth.split(':'))
     ping_response = ping_webui(webui_instance)
-    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
+    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     if ping_response is None:
         return False, f"WebUI at {webui_url} is not reachable"
     # now upload, request samples, and download results, then remove uploaded files
     
     ckpt_name_to_upload = str(uuid.uuid4()) # generate random uuid for checkpoint name
     # the following function calls are thread-blocking so it is called and queued in a thread
-    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload, should_sync=should_sync)
+    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload)
     if not upload_success:
         return False, message
-    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
+    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
-    assert_lora(webui_instance, ckpt_name, ckpt_name_to_upload, should_sync=should_sync) # assert lora exists
+    assert_lora(webui_instance, ckpt_name, ckpt_name_to_upload) # assert lora exists
     # remove extension
-    refresh_lora(webui_instance, should_sync=should_sync) # refresh lora to make sure it is up to date
-    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
+    refresh_lora(webui_instance) # refresh lora to make sure it is up to date
+    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     if '.' in ckpt_name:
         ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
     sample_success, msg = request_sample(
@@ -94,20 +130,19 @@ def sample_images_external_webui(
         output_name,
         accelerator,
         webui_instance,
-        ckpt_name=ckpt_name,
-        should_sync=should_sync
+        ckpt_name=ckpt_name
     )
     msg = message + msg
     if not sample_success:
         return False, msg
-    sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
-    remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload, should_sync=should_sync)
+    sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
+    remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload)
     msg += msg_remove
     if not remove_success:
         return True, msg # still return true if remove failed
     return True, msg
 
-def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
+def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
     """
     Upload checkpoint to webui. Returns true if upload was successful. Returns False if webui was not reachable.
     """
@@ -119,39 +154,24 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str,
         return response
     # submit thread
     response_text = ""
-    if not should_sync:
-        submit(upload_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
-    else:
-        # directly execute the function
-        reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
-        response_text = reponse.text if reponse is not None else ""
+    reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
+    response_text = reponse.text if reponse is not None else ""
     return True, response_text
 
-def sleep_task(seconds:int, should_sync:bool = False):
-    if not should_sync:
-        submit(time.sleep, seconds)
-    else:
-        time.sleep(seconds)
+def sleep_task(seconds:int):
+    time.sleep(seconds)
 
-def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[bool, str]:
+def refresh_lora(webui_instance:WebUIApi) -> Tuple[bool, str]:
     """
     Sends refresh request to webui.
     Always return true.
     """
-    def refresh_thread(webui_instance:WebUIApi):
-        response = webui_instance.refresh_loras()
-        return response
-    # submit thread
     response_text = ""
-    if not should_sync:
-        submit(refresh_thread, webui_instance)
-    else:
-        # directly execute the function
-        response = refresh_thread(webui_instance)
-        response_text = response.text if response is not None else ""
+    response = webui_instance.refresh_loras()
+    response_text = response.text if response is not None else ""
     return True, response_text
 
-def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str, should_sync:bool=False) -> Tuple[bool, str]:
+def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str) -> Tuple[bool, str]:
     """
     Checks if checkpoint exists in webui.
     Returns true if checkpoint exists.
@@ -170,35 +190,22 @@ def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str, should_
             # if executed in thread, crash the thread
             raise RuntimeError(f"File does not exist in webui: {filename}") # may crash ThreadPoolExecutor
     # submit thread
-    if not should_sync:
-        future = submit(get_query_hash_lora, webui_instance, subpath, ckpt_filename)
-        return True, ""
-    else:
-        # directly execute the function
-        exists, filename = get_query_hash_lora(webui_instance, subpath, ckpt_filename)
-        if not exists:
-            raise RuntimeError(f"File does not exist in webui: {filename}")
-        return True, filename
+    exists, filename = get_query_hash_lora(webui_instance, subpath, ckpt_filename)
+    if not exists:
+        raise RuntimeError(f"File does not exist in webui: {filename}")
+    return True, filename
+        
 
-def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
+def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
     """
     Remove checkpoint from webui. Returns true if removal was successful. Returns False if webui was not reachable.
     """
-    def remove_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
-        response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
-        return response
     # submit thread
     response_text = ""
-    if not should_sync:
-        submit(remove_thread, webui_instance, ckpt_name, ckpt_name_to_upload)
-    else:
-        # directly execute the function
-        response = remove_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
-        response_text = response.text if response is not None else ""
+    response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
+    response_text = response.text if response is not None else ""  
     return True, response_text
 
-
-    
 def ping_webui(webui_instance:WebUIApi) -> bool:
     """
     Ping webui to check if it is reachable, and uploader is alive.
@@ -320,8 +327,7 @@ def request_sample(
         output_name:str,
         accelerator:Accelerator,
         webui_instance:WebUIApi,
-        ckpt_name:str="",
-        should_sync:bool = False
+        ckpt_name:str=""
     ) -> Tuple[bool, str]:
     """
     Generate sample with external webui. This function is thread-locking. 
@@ -412,20 +418,9 @@ def request_sample(
             image = queued_task_result.get_image()
             if image is None:
                 raise RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
-                return
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
-            # 
             log_wandb(accelerator, image, orig_prompt, negative_prompt, seed)
-        # start thread
-        
-        
-        if should_sync:
-            # wait until job is done and executor is idle
-            get_thread_pool_executor().shutdown(wait=True) # wait until previous job is done
-            # here directly execute the function
-            wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
-        else:
-            submit(wait_and_save, queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
+        wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         any_success = True
     if not any_success:
         return False, "No valid prompts found\n" + message
