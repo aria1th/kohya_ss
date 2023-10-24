@@ -832,7 +832,19 @@ class WebUIApi:
         if result.status_code != 200:
             raise RuntimeError(result.status_code, result.text)
         return result_json
-        
+    
+    def query_hash_loras(self, subpath:str=""):
+        # /models/query_hash_sd_all
+        target_url = self.real_url + "/models/query_hash_lora_all"
+        # post path=subpath
+        payload = {"path": subpath}
+        result = self.session.post(target_url, json=payload)
+        # curl -X POST -H "Content-Type: application/json" -d "{\"path\":\""}" http://127.0.0.1:7860/models/query_hash_sd_all
+        result_json = result.json()
+        if result.status_code != 200:
+            raise RuntimeError(result.status_code, result.text)
+        return result_json 
+    
     def img2img(
         self,
         images=[],  # list of PIL Image

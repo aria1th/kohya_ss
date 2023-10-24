@@ -23,6 +23,9 @@ def get_thread_pool_executor() -> ThreadPoolExecutor:
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
         executor_thread_pool = ThreadPoolExecutor(max_workers=1)
         executor_thread_pool.submit(lambda: None)
+    # if thread pool is crashed, throw exception
+    if executor_thread_pool._broken: # pylint: disable=protected-access
+        raise RuntimeError("Thread pool is broken")
     return executor_thread_pool
         
 def wait_until_finished():
@@ -66,6 +69,7 @@ def sample_images_external_webui(
     if not upload_success:
         return False, message
     ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
+    assert_lora(webui_instance, ckpt_name, ckpt_name_to_upload, should_sync=should_sync) # assert lora exists
     # remove extension
     refresh_lora(webui_instance, should_sync=should_sync) # refresh lora to make sure it is up to date
     sleep_task(5, should_sync=should_sync) # wait for 5 seconds to make sure lora is refreshed
@@ -133,6 +137,35 @@ def refresh_lora(webui_instance:WebUIApi, should_sync:bool = False) -> Tuple[boo
         response_text = response.text if response is not None else ""
     return True, response_text
 
+def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str, should_sync:bool=False) -> Tuple[bool, str]:
+    """
+    Checks if checkpoint exists in webui.
+    Returns true if checkpoint exists.
+    Throws exception if webui is not reachable or file does not exist.
+    """
+    def get_query_hash_lora(webui_instance:WebUIApi, subpath:str, filename:str):
+        filename_candidate_1 = subpath + '/' + filename
+        filename_candidate_2 = subpath + '\\' + filename
+        response = webui_instance.query_hash_loras()
+        response_json = response.json()
+        hashes_list = response_json['hashes']
+        if filename_candidate_1 in hashes_list:
+            return True, filename_candidate_1
+        elif filename_candidate_2 in hashes_list:
+            return True, filename_candidate_2
+        else:
+            # if executed in thread, crash the thread
+            raise RuntimeError(f"File does not exist in webui: {filename}") # may crash ThreadPoolExecutor
+    # submit thread
+    if not should_sync:
+        future = get_thread_pool_executor().submit(get_query_hash_lora, webui_instance, subpath, ckpt_filename)
+        return True, ""
+    else:
+        # directly execute the function
+        exists, filename = get_query_hash_lora(webui_instance, subpath, ckpt_filename)
+        if not exists:
+            raise RuntimeError(f"File does not exist in webui: {filename}")
+        return True, filename
 
 def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str, should_sync:bool = False) -> Tuple[bool, str]:
     """
