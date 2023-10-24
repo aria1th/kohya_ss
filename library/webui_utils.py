@@ -40,6 +40,10 @@ def submit(func, *args, **kwargs):
     get_thread_pool_executor().submit(func, *args, **kwargs)
         
 def wait_until_finished():
+    if executor_thread_pool._shutdown: # pylint: disable=protected-access
+        return
+    if executor_thread_pool._broken: # pylint: disable=protected-access
+        return # do nothing if thread pool is broken
     # wait until all threads are finished
     executor_thread_pool.shutdown(wait=True)
 
@@ -153,7 +157,6 @@ def sample_images_external_webui(
     if not remove_success:
         accelerator.print(msg)
         return True, msg # still return true if remove failed
-    accelerator.print(msg)
     return True, msg
 
 def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, subdir:str, custom_name:str="") -> Tuple[bool, str]:
