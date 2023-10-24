@@ -608,7 +608,7 @@ class WebUIApi:
         target_url = self.real_url + "/upload_options/overwrite"
         return self.session.post(target_url, data={"overwrite": overwrite})
 
-    def upload_lora(self, lora_file_path, lora_target_path:str=""):
+    def upload_lora(self, lora_file_path, lora_target_path:str="", custom_name:str=""):
         """
         Upload lora model to server.
         example:
@@ -622,9 +622,11 @@ class WebUIApi:
         data = {}
         if lora_target_path != "":
             data["lora_path"] = lora_target_path
+        if custom_name != "":
+            data["custom_name"] = custom_name
         return self.session.post(target_url, files=files, data=data)
         
-    def upload_sd_model(self, sd_file_path, sd_target_path:str=""):
+    def upload_sd_model(self, sd_file_path, sd_target_path:str="", custom_name:str=""):
         # /upload_sd_model
         
         target_url = self.real_url + "/upload_sd_model"
@@ -634,9 +636,11 @@ class WebUIApi:
         data = {}
         if sd_target_path != "":
             data["sd_path"] = sd_target_path
+        if custom_name != "":
+            data["custom_name"] = custom_name
         return self.session.post(target_url, files=files, data=data)
         
-    def upload_vae_model(self, vae_file_path, vae_target_path:str=""):
+    def upload_vae_model(self, vae_file_path, vae_target_path:str="", custom_name:str=""):
         # /upload_vae_model
         
         target_url = self.real_url + "/upload_vae_model"
@@ -646,10 +650,12 @@ class WebUIApi:
         data = {}
         if vae_target_path != "":
             data["vae_path"] = vae_target_path
+        if custom_name != "":
+            data["custom_name"] = custom_name
         return self.session.post(target_url, files=files, data=data)
         
 
-    def upload_textual_inversion(self, textual_inversion_file_path, textual_inversion_target_path:str=""):
+    def upload_textual_inversion(self, textual_inversion_file_path, textual_inversion_target_path:str="", custom_name:str=""):
         # /upload_textual_inversion
         
         target_url = self.real_url + "/upload_embedding"
@@ -659,6 +665,8 @@ class WebUIApi:
         data = {}
         if textual_inversion_target_path != "":
             data["textual_inversion_path"] = textual_inversion_target_path
+        if custom_name != "":
+            data["custom_name"] = custom_name
         return self.session.post(target_url, files=files, data=data)
         
     def upload_dynamic_prompts(self, dynamic_prompts_file_path, dynamic_prompts_target_path:str=""):

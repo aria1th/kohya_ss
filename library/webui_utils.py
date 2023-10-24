@@ -12,7 +12,6 @@ from accelerate import Accelerator
 from concurrent.futures import ThreadPoolExecutor
 from library.webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
 from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
-from queue import Queue
 
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
 executor_thread_pool.submit(lambda: None) # submit dummy task to start thread
@@ -85,8 +84,14 @@ def sample_images_external_webui(
     """
     Generate sample with external webui. Returns true if sample request was successful. Returns False if webui was not reachable.
     """
+    # timestamp, used for checkpoint name
+    timestamp = time.strftime('%Y%m%d%H%M%S')
+    file_name = os.path.basename(abs_ckpt_path)
+    file_without_ext, ext = os.path.splitext(file_name)
+    filename_with_timestamp = f"{file_without_ext}_{timestamp}{ext}"
     # prompt file path can be .json file for webui
     if not prompt_file_path.endswith(".json") and not prompt_file_path.endswith(".txt"):
+        accelerator.print(f"Invalid prompt file path. Must end with .json or .txt, got {prompt_file_path}")
         return False, f"Invalid prompt file path. Must end with .json or .txt, got {prompt_file_path}"
     if not webui_url.endswith('/sdapi/v1'):
         # first split by /, then remove last element, then join back
@@ -96,22 +101,25 @@ def sample_images_external_webui(
     webui_instance = WebUIApi(baseurl=webui_url)
     if webui_auth and ':' in webui_auth:
         if len(webui_auth.split(':')) != 2:
+            accelerator.print(f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}")
             return False, f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}"
         webui_instance.set_auth(*webui_auth.split(':'))
     ping_response = ping_webui(webui_instance)
     sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
     if ping_response is None:
+        accelerator.print(f"WebUI at {webui_url} is not reachable")
         return False, f"WebUI at {webui_url} is not reachable"
     # now upload, request samples, and download results, then remove uploaded files
     
-    ckpt_name_to_upload = str(uuid.uuid4()) # generate random uuid for checkpoint name
+    subdir = str(uuid.uuid4()) # generate random uuid for checkpoint name
     # the following function calls are thread-blocking so it is called and queued in a thread
-    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, ckpt_name_to_upload)
+    upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, subdir, custom_name=filename_with_timestamp)
     if not upload_success:
+        accelerator.print(message)
         return False, message
     sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
-    ckpt_name = os.path.basename(abs_ckpt_path) # get ckpt name from path
-    assert_lora(webui_instance, ckpt_name, ckpt_name_to_upload) # assert lora exists
+    ckpt_name = filename_with_timestamp # checkpoint name
+    _true, message_assertion = assert_lora(webui_instance, filename_with_timestamp, subdir) # assert lora exists
     # remove extension
     refresh_lora(webui_instance) # refresh lora to make sure it is up to date
     sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
@@ -127,31 +135,30 @@ def sample_images_external_webui(
     )
     msg = message + msg
     if not sample_success:
+        accelerator.print(msg)
         return False, msg
     sleep_task(5) # wait for 5 seconds to make sure lora is refreshed
-    remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', ckpt_name_to_upload)
+    remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', subdir)
     msg += msg_remove
     if not remove_success:
+        accelerator.print(msg)
         return True, msg # still return true if remove failed
+    accelerator.print(msg)
     return True, msg
 
-def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
+def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, subdir:str, custom_name:str="") -> Tuple[bool, str]:
     """
     Upload checkpoint to webui. Returns true if upload was successful. Returns False if webui was not reachable.
     """
     # check if ckpt_name is a valid path
     if not os.path.exists(ckpt_name):
         return False, f"Invalid checkpoint path. File does not exist: {ckpt_name}"
-    def upload_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
-        response = webui_instance.upload_lora(ckpt_name, ckpt_name_to_upload)
-        assert response is not None, f"WebUI at {webui_instance.baseurl} is not reachable"
-        assert response.status_code == 200, f"WebUI at {webui_instance.baseurl} returned status code {response.status_code}, response: {response.text}"
-        assert response.json().get('success', False), f"WebUI at {webui_instance.baseurl} returned success false, response: {response.text}"
-        return response
-    # submit thread
-    response_text = ""
-    reponse = upload_thread(webui_instance, ckpt_name, ckpt_name_to_upload)
-    response_text = reponse.text if reponse is not None else ""
+    response = webui_instance.upload_lora(ckpt_name, subdir, custom_name=custom_name)
+    assert response is not None, f"WebUI at {webui_instance.baseurl} is not reachable"
+    assert response.status_code == 200, f"WebUI at {webui_instance.baseurl} returned status code {response.status_code}, response: {response.text}"
+    assert response.json() is not None, f"WebUI at {webui_instance.baseurl} returned invalid json, response: {response.text}"
+    assert response.json().get('success', False), f"WebUI at {webui_instance.baseurl} returned success false, response: {response.text}"
+    response_text = response.text if response is not None else ""
     return True, response_text
 
 def sleep_task(seconds:int):
@@ -192,13 +199,13 @@ def assert_lora(webui_instance:WebUIApi, ckpt_filename:str, subpath:str) -> Tupl
     return True, filename
         
 
-def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str) -> Tuple[bool, str]:
+def remove_ckpt(webui_instance:WebUIApi, ckpt_name:str, subdir:str) -> Tuple[bool, str]:
     """
     Remove checkpoint from webui. Returns true if removal was successful. Returns False if webui was not reachable.
     """
     # submit thread
     response_text = ""
-    response = webui_instance.remove_lora_model(f"{ckpt_name_to_upload}/{ckpt_name}")
+    response = webui_instance.remove_lora_model(f"{subdir}/{ckpt_name}")
     response_text = response.text if response is not None else ""  
     return True, response_text
 
