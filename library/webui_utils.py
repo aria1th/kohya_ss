@@ -14,14 +14,8 @@ from library.webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
 from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
 from queue import Queue
 
-work_queue = Queue() #FIFO queue
-def work_queue_thread():
-    while True:
-        task = work_queue.get()
-        task()
-        work_queue.task_done()
 executor_thread_pool = ThreadPoolExecutor(max_workers=1) # sequential execution
-executor_thread_pool.submit(work_queue_thread)
+executor_thread_pool.submit(lambda: None) # submit dummy task to start thread
     
 
 def get_thread_pool_executor() -> ThreadPoolExecutor:
@@ -29,15 +23,14 @@ def get_thread_pool_executor() -> ThreadPoolExecutor:
     global executor_thread_pool
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
         executor_thread_pool = ThreadPoolExecutor(max_workers=1)
-        executor_thread_pool.submit(work_queue_thread)
+        executor_thread_pool.submit(lambda: None)
     # if thread pool is crashed, throw exception
     if executor_thread_pool._broken: # pylint: disable=protected-access
         raise RuntimeError("Thread pool is broken")
     return executor_thread_pool
 
 def submit(func, *args, **kwargs):
-    get_thread_pool_executor()
-    work_queue.put(lambda: func(*args, **kwargs))
+    get_thread_pool_executor().submit(func, *args, **kwargs)
         
 def wait_until_finished():
     # wait until all threads are finished
@@ -151,6 +144,9 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str)
         return False, f"Invalid checkpoint path. File does not exist: {ckpt_name}"
     def upload_thread(webui_instance:WebUIApi, ckpt_name:str, ckpt_name_to_upload:str):
         response = webui_instance.upload_lora(ckpt_name, ckpt_name_to_upload)
+        assert response is not None, f"WebUI at {webui_instance.baseurl} is not reachable"
+        assert response.status_code == 200, f"WebUI at {webui_instance.baseurl} returned status code {response.status_code}, response: {response.text}"
+        assert response.json().get('success', False), f"WebUI at {webui_instance.baseurl} returned success false, response: {response.text}"
         return response
     # submit thread
     response_text = ""
