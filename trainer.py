@@ -493,6 +493,7 @@ def add_extra_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--mask_dir', type=str, default='', help='Mask dir for the project (default: "")')
   # mask threshold
   parser.add_argument('--mask_threshold', type=float, default=0.5, help='Mask threshold for the project (default: 0.5)')
+  parser.add_argument('--process_title', type=str, default='LoRA', help='Process title for the project (default: LoRA)')
   return ['zero_terminal_snr', 'v2', 'v_parameterization', 'mask_loss', 'mask_dir', 'mask_threshold']
 
 def add_optimizer_args(parser : argparse.ArgumentParser) -> List[str]:
