@@ -58,6 +58,8 @@ def wrap_sample_images_external_webui(
     If should_sync is true, it will directly call sample_images_external_webui.
     If should_sync is false, it will submit the function to thread pool executor.
     """
+    if any_error_occurred:
+        raise error_obj
     if should_sync:
         return sample_images_external_webui(
             prompt_file_path,
@@ -167,7 +169,7 @@ def upload_ckpt(webui_instance:WebUIApi, ckpt_name:str, subdir:str, custom_name:
     assert response.json() is not None, f"WebUI at {webui_instance.baseurl} returned invalid json, response: {response.text}"
     assert response.json().get('success', False), f"WebUI at {webui_instance.baseurl} returned success false, response: {response.text}"
     response_text = response.text if response is not None else ""
-    return True, response_text
+    return response.json().get('success', False), response_text
 
 def sleep_task(seconds:int):
     time.sleep(seconds)
