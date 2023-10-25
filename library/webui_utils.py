@@ -259,9 +259,9 @@ def log_wandb(
         logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
         wandb_tracker.log(
             {
+                'custom_step' : steps,
                 logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt}"),
-            },
-            step=steps if steps > 0 else None
+            }
         )
     except:  # wandb 無効時 # pylint: disable=bare-except
         pass
