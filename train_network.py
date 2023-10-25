@@ -734,7 +734,8 @@ class NetworkTrainer:
                         i = len(json.load(f))
                 elif args.webui_url is not None:
                     raise ValueError("prompt_path for webui must be .txt or .json")
-                wandb.define_metric(f"image_{i}", step_metric = "custom_step")
+                for _i in range(i):
+                    wandb.define_metric(f"image_{_i}", step_metric = "custom_step")
                 
             except (ImportError, ModuleNotFoundError):
                 pass # wandb is not installed
