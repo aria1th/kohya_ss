@@ -39,6 +39,7 @@ from library.train_util import (
 )
 from library.webui_utils import (
     wait_until_finished,
+    check_ping_webui
 )
 import library.config_util as config_util
 from library.config_util import (
@@ -146,6 +147,8 @@ class NetworkTrainer:
         training_started_at = time.time()
         train_util.verify_training_args(args)
         train_util.prepare_dataset_args(args, True)
+        if args.webui_url:
+            check_ping_webui(args.webui_url, args.webui_auth)
         if args.process_title is not None:
             # attach python/ if not specified
             if not args.process_title.startswith("python/"):

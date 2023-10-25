@@ -88,7 +88,23 @@ def wrap_sample_images_external_webui(
             steps=steps
         )
         return True, "Sample request submitted to thread pool executor\n"
+
+def check_ping_webui(webui_url:str, webui_auth:str=None):
+    if not webui_url.endswith('/sdapi/v1'):
+        # first split by /, then remove last element, then join back
+        if webui_url.endswith('/'):
+            webui_url = webui_url[:-1]
+        webui_url = webui_url + '/sdapi/v1'
+    webui_instance = WebUIApi(baseurl=webui_url)
+    if webui_auth and ':' in webui_auth:
+        if len(webui_auth.split(':')) != 2:
+            raise ValueError(f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}")
+        webui_instance.set_auth(*webui_auth.split(':'))
+    ping_response = ping_webui(webui_instance)
+    if ping_response is None or ping_response is False:
+        raise RuntimeError(f"WebUI at {webui_url} is not reachable")
     
+
 def sample_images_external_webui(
         prompt_file_path:str,
         output_dir_path:str,
