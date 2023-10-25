@@ -66,12 +66,14 @@ class QueuedTaskResult:
     cached_image: Image.Image = None
     cached_images: List[Image.Image] = []
     infotexts:list[str] = [] # list of infotexts for each image
+    failed_count: int = 0
     
     def __init__(self, task_id: str, task_address: str, session: requests.Session = None):
         self.task_id = task_id
         self.task_address = task_address
         self.expect_rate_limit = True
         self.session = session if session else requests.Session()
+        self.failed_count = 0
 
     def get_image(self):
         self.check_finished()
@@ -111,7 +113,14 @@ class QueuedTaskResult:
             # it should return {"current_task_id" : str, "pending_tasks" : [{"api_task_id" : str}]}
             # if self.task_id is found in any of pending tasks or current_task_id, then it is not finished
             # else, find /agent-scheduler/v1/results/{task_id}
-            response = self.session.get(self.task_address + "/agent-scheduler/v1/queue") 
+            try:
+                response = self.session.get(self.task_address + "/agent-scheduler/v1/queue") 
+            except requests.exceptions.ConnectionError as exc:
+                self.failed_count += 1
+                if self.failed_count == 5:
+                    raise RuntimeError("Failed to connect to " + self.task_address + "/agent-scheduler/v1/queue") from exc
+                return False
+            self.failed_count = 0
             try:
                 req_json = response.json()
             except json.JSONDecodeError as exc:
