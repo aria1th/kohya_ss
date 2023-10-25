@@ -718,6 +718,11 @@ class NetworkTrainer:
             accelerator.init_trackers(
                 "network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs
             )
+            try:
+                import wandb
+                wandb.define_metric("custom_step")
+            except (ImportError, ModuleNotFoundError):
+                pass # wandb is not installed
 
         loss_list = []
         loss_total = 0.0
