@@ -261,7 +261,8 @@ def log_wandb(
         prompt:str,
         negative_prompt:str,
         seed:int,
-        steps:int=0
+        steps:int=0,
+        index:int=0,
     ):
     try:
         wandb_tracker = accelerator.get_tracker("wandb")
@@ -270,13 +271,13 @@ def log_wandb(
         except ImportError: 
             raise ImportError("No wandb / wandb がインストールされていないようです")
         # log generation information to wandb
-        logging_caption_key = f"prompt : {prompt} seed: {str(seed)}"
+        logging_caption_key = f"image_{index}"
         # remove invalid characters from the caption for filenames
         logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
         wandb_tracker.log(
             {
                 'custom_step' : steps,
-                logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt}"),
+                logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt} seed: {seed}"),
             }
         )
     except:  # wandb 無効時 # pylint: disable=bare-except
@@ -462,7 +463,7 @@ def request_sample(
                 error_obj = RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
                 raise RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
-            log_wandb(accelerator, image, orig_prompt, negative_prompt, seed, steps=steps)
+            log_wandb(accelerator, image, orig_prompt, negative_prompt, seed, steps=steps, index=i)
         wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         any_success = True
     if not any_success:

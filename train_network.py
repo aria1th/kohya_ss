@@ -724,6 +724,18 @@ class NetworkTrainer:
             try:
                 import wandb
                 wandb.define_metric("custom_step")
+                prompt_path = args.sample_prompts
+                # .txt then i = lines, json then i = length of list
+                if prompt_path.endswith(".txt"):
+                    with open(prompt_path, "r", encoding='utf-8') as f:
+                        i = len(f.readlines())
+                elif prompt_path.endswith(".json"):
+                    with open(prompt_path, "r", encoding='utf-8') as f:
+                        i = len(json.load(f))
+                elif args.webui_url is not None:
+                    raise ValueError("prompt_path for webui must be .txt or .json")
+                wandb.define_metric(f"image_{i}", step_metric = "custom_step")
+                
             except (ImportError, ModuleNotFoundError):
                 pass # wandb is not installed
 
