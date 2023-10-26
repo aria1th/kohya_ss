@@ -233,6 +233,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', default=False) #optional
     # venv path
     parser.add_argument('--venv_path', type=str, default='') #optional
+    parser.add_argument('--skip_to_index', type=int, default=-1) #optional
 
     # python automate-train.py --project_name_base BASE --default_config_path default_config.json --tuning_config_path tuning_config.json 
     # --train_id_start 0 --images_folder '' --model_file '' --port '' --cuda_device ''
@@ -300,7 +301,10 @@ if __name__ == '__main__':
         project_name_base = tuning_config['project_name_base']
     keys_to_remove = {'CUDA_VISIBLE_DEVICES', 'PORT'}
     sets_executed_args = set() # set of executed args
+    index_to_skip = args.skip_to_index # skip to index, compare current index until it is equal or bigger than index_to_skip
+    current_index = -1
     for args_prod in product(*list_arguments_name.values()):
+        current_index += 1
         list_arguments = dict(zip(list_arguments_name.keys(), args_prod))
         # check if this set of arguments is already executed with args_prod
         if template_path is not None:
@@ -324,6 +328,9 @@ if __name__ == '__main__':
         if str(config_without_log_tracker_config) in sets_executed_args:
             print(f"skipping {config_without_log_tracker_config} because it is already executed")
             continue # skip
+        if current_index < index_to_skip:
+            print(f"skipping {config_without_log_tracker_config} because it is before index_to_skip")
+            continue
         sets_executed_args.add(str(config_without_log_tracker_config))
         config = generate_config(**temp_tuning_config,
                                 )
