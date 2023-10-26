@@ -246,6 +246,7 @@ if __name__ == '__main__':
     cuda_device = args.cuda_device
     venv_path = args.venv_path
     accelerate_path = 'accelerate' # default path
+    index_to_skip = args.skip_to_index
     # handling venv
     if venv_path != '':
         execute_path = os.path.join(venv_path, 'bin', 'python')
@@ -301,7 +302,7 @@ if __name__ == '__main__':
         project_name_base = tuning_config['project_name_base']
     keys_to_remove = {'CUDA_VISIBLE_DEVICES', 'PORT'}
     sets_executed_args = set() # set of executed args
-    index_to_skip = args.skip_to_index # skip to index, compare current index until it is equal or bigger than index_to_skip
+    # skip to index, compare current index until it is equal or bigger than index_to_skip
     current_index = -1
     for args_prod in product(*list_arguments_name.values()):
         current_index += 1
