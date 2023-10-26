@@ -4745,7 +4745,8 @@ def sample_images_common(
                 wandb_tracker.log(
                     {
                         logging_caption_key: wandb.Image(image, caption=f"negative_prompt: {negative_prompt}"),
-                    }
+                    },
+                    commit=False, # don't step forward
                 )
             except:  # wandb 無効時
                 pass

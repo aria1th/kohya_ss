@@ -278,7 +278,8 @@ def log_wandb(
             {
                 'custom_step' : steps,
                 logging_caption_key: wandb.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt} seed: {seed}"),
-            }
+            },
+            commit=False
         )
     except:  # wandb 無効時 # pylint: disable=bare-except
         pass
