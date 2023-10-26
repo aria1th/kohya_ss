@@ -98,7 +98,14 @@ class QueuedTaskResult:
         Throws RuntimeError if task is failed
         Throws ValueError if task is not found
         """
-        self.check_finished()
+        try:
+            self.check_finished()
+            self.failed_count = 0
+        except requests.exceptions.ConnectionError as exception:
+            self.failed_count += 1
+            if self.failed_count == 10:
+                raise RuntimeError("Failed to connect to " + self.task_address + "/agent-scheduler/v1/queue") from exception
+            return False
         return self.terminated
     
     def check_finished(self, check_delay:int = 5):
@@ -113,13 +120,7 @@ class QueuedTaskResult:
             # it should return {"current_task_id" : str, "pending_tasks" : [{"api_task_id" : str}]}
             # if self.task_id is found in any of pending tasks or current_task_id, then it is not finished
             # else, find /agent-scheduler/v1/results/{task_id}
-            try:
-                response = self.session.get(self.task_address + "/agent-scheduler/v1/queue") 
-            except requests.exceptions.ConnectionError as exc:
-                self.failed_count += 1
-                if self.failed_count == 5:
-                    raise RuntimeError("Failed to connect to " + self.task_address + "/agent-scheduler/v1/queue") from exc
-                return False
+            response = self.session.get(self.task_address + "/agent-scheduler/v1/queue")
             self.failed_count = 0
             try:
                 req_json = response.json()
