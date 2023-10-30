@@ -845,10 +845,33 @@ class NetworkTrainer:
                         
                     if args.mask_loss:
                         # mask the noise_pred and target
-                        noise_pred, target = apply_mask_loss(noise_pred, target, batch, mask_loss_weight=args.mask_loss_weight, mask_threshold=args.mask_threshold)
+                        noise_pred_masked, target_masked = apply_mask_loss(noise_pred, target, batch, mask_loss_weight=args.mask_loss_weight, mask_threshold=args.mask_threshold)
+                        # Here, noise_pred and target are masked tensors with identical shape
+                        noise_pred_residual = noise_pred - noise_pred_masked # residual of noise_pred
+                        target_residual = target - target_masked # residual of target
+                        # here we calculated residuals for debugging so detach them
+                        noise_pred_residual = noise_pred_residual.detach()
+                        target_residual = target_residual.detach()
+                        noise_pred = noise_pred_masked
+                        target = target_masked
+                        
+                        # calculate loss for residuals, then we will log them
+                        loss_residual = torch.nn.functional.mse_loss(noise_pred_residual.float(), target_residual.float(), reduction="none")
+                        loss_residual = loss_residual.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
+                        loss_residual_weights = batch["loss_weights"]  # 各sampleごとのweight
+                        loss_residual = loss_residual * loss_residual_weights
+                        if args.min_snr_gamma:
+                            loss_residual = apply_snr_weight(loss_residual, timesteps, noise_scheduler, args.min_snr_gamma)
+                        if args.scale_v_pred_loss_like_noise_pred:
+                            loss_residual = scale_v_prediction_loss_like_noise_prediction(loss_residual, timesteps, noise_scheduler)
+                        if args.v_pred_like_loss:
+                            loss_residual = add_v_prediction_like_loss(loss_residual, timesteps, noise_scheduler, args.v_pred_like_loss)
+                        loss_residual = loss_residual.mean()  # 平均なのでbatch_sizeで割る必要なし
+                    else:
+                        loss_residual = None # Not used
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean([1, 2, 3])
+                    loss = loss.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
 
                     loss_weights = batch["loss_weights"]  # 各sampleごとのweight
                     loss = loss * loss_weights
@@ -918,6 +941,8 @@ class NetworkTrainer:
 
                 if args.logging_dir is not None:
                     logs = self.generate_step_logs(args, current_loss, avr_loss, lr_scheduler, keys_scaled, mean_norm, maximum_norm)
+                    if loss_residual is not None:
+                        logs["loss/residual"] = loss_residual.mean().item()
                     accelerator.log(logs, step=global_step)
 
                 if global_step >= args.max_train_steps:
