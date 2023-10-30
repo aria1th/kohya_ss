@@ -372,4 +372,5 @@ if __name__ == '__main__':
             subprocess.check_call(command_inputs)
         train_id += 1
         last_tmp_dir = config['temp_dir']
-    subprocess.check_call([execute_path, "merge_csv.py", "--path", last_tmp_dir, "--output", f"result_{project_name_base}.csv"])
+    if not debug:
+        subprocess.check_call([execute_path, "merge_csv.py", "--path", last_tmp_dir, "--output", f"result_{project_name_base}.csv"])
