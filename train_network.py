@@ -187,7 +187,7 @@ class NetworkTrainer:
                         "datasets": [
                             {
                                 "subsets": config_util.generate_dreambooth_subsets_config_by_subdirs(
-                                    args.train_data_dir, args.reg_data_dir,mask_dir=args.mask_dir
+                                    args.train_data_dir, args.reg_data_dir,mask_dir=args.mask_dir, shift_images_dir=args.shift_images_dir
                                 )
                             }
                         ]
@@ -202,6 +202,7 @@ class NetworkTrainer:
                                         "image_dir": args.train_data_dir,
                                         "metadata_file": args.in_json,
                                         "mask_dir": args.mask_dir,
+                                        "shift_images_dir": args.shift_images_dir,
                                     }
                                 ]
                             }

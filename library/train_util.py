@@ -18,6 +18,7 @@ from typing import (
     Tuple,
     Union,
 )
+from functools import cache
 from accelerate import Accelerator
 import gc
 import glob
@@ -165,6 +166,8 @@ class ImageInfo:
         else:
             print(f"Mask path is not specified for image {self.image_key}.")
         self.mask: Optional[torch.Tensor] = None # mask is a tensor of shape (1, 1, H, W)
+        # shift_images
+        self.shift_images: Optional[str] = None # shift_images is image path directory to find variations of the image
 
 
 class BucketManager:
@@ -318,6 +321,38 @@ class BucketBatchIndex(NamedTuple):
     bucket_batch_size: int
     batch_index: int
 
+class RuntimeImageShifter:
+    """
+    Changes images at runtime, i.e. a_v1.png <-> {a_v2.png, a_v3.png,...}
+    """
+    def __init__(self, pattern:str="_v[0-9]+"):
+        self.pattern = pattern
+        
+    @cache
+    def find_variations(self, file_name:str, search_dir:str) -> List[str]:
+        """
+        Find variations of the file_name in the search_dir.
+        """
+        # find variations
+        variations = []
+        file_name_only = os.path.basename(file_name) # file name without directory
+        file_name_without_ext = os.path.splitext(file_name_only)[0] # file name without extension
+        # search for variations with self.pattern, such as a_v1.png, a_v2.png, a_v3.png, etc.
+        pattern = re.compile(f"{file_name_without_ext}{self.pattern}\.(png|jpg|jpeg|webp|PNG|JPG|JPEG|WEBP)$")
+        for file in os.listdir(search_dir):
+            if pattern.match(file):
+                variations.append(os.path.join(search_dir, file))
+        return variations
+    
+    def get_variation(self, file_name:str, search_dir:str) -> str:
+        """
+        Get a variation of the file_name in the search_dir.
+        """
+        variations = self.find_variations(file_name, search_dir)
+        if len(variations) == 0:
+            return file_name
+        else:
+            return random.choice(variations)
 
 class AugHelper:
     # albumentationsへの依存をなくしたがとりあえず同じinterfaceを持たせる
@@ -353,7 +388,7 @@ class AugHelper:
         return {"image": image}
 
     def get_augmentor(self, use_color_aug: bool):  # -> Optional[Callable[[np.ndarray], Dict[str, np.ndarray]]]:
-        return self.color_aug if use_color_aug else None
+        return self.color_aug if use_color_aug else lambda x: {"image": x}
 
 
 class BaseSubset:
@@ -375,6 +410,7 @@ class BaseSubset:
         token_warmup_min: int,
         token_warmup_step: Union[float, int],
         mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         self.image_dir = image_dir
         self.num_repeats = num_repeats
@@ -394,8 +430,12 @@ class BaseSubset:
         self.token_warmup_step = token_warmup_step  # N（N<1ならN*max_train_steps）ステップ目でタグの数が最大になる
         
         self.mask_dir = mask_dir    # mask directory that is used for training
+        self.shift_images_dir = shift_images_dir # shift_images directory that is used for training
 
         self.img_count = 0
+        
+    def is_cacheable(self):
+        return not self.color_aug and not self.random_crop
 
 
 class DreamBoothSubset(BaseSubset):
@@ -420,6 +460,7 @@ class DreamBoothSubset(BaseSubset):
         token_warmup_min,
         token_warmup_step,
         mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -440,6 +481,7 @@ class DreamBoothSubset(BaseSubset):
             token_warmup_min,
             token_warmup_step,
             mask_dir=mask_dir,
+            shift_images_dir=shift_images_dir,
         )
 
         self.is_reg = is_reg
@@ -474,6 +516,7 @@ class FineTuningSubset(BaseSubset):
         token_warmup_min,
         token_warmup_step,
         mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         assert metadata_file is not None, "metadata_file must be specified / metadata_fileは指定が必須です"
 
@@ -494,6 +537,7 @@ class FineTuningSubset(BaseSubset):
             token_warmup_min,
             token_warmup_step,
             mask_dir=mask_dir,
+            shift_images_dir=shift_images_dir,
         )
 
         self.metadata_file = metadata_file
@@ -525,6 +569,7 @@ class ControlNetSubset(BaseSubset):
         token_warmup_min,
         token_warmup_step,
         mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -545,6 +590,7 @@ class ControlNetSubset(BaseSubset):
             token_warmup_min,
             token_warmup_step,
             mask_dir=mask_dir,
+            shift_images_dir=shift_images_dir,
         )
 
         self.conditioning_data_dir = conditioning_data_dir
@@ -600,6 +646,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # augmentation
         self.aug_helper = AugHelper()
+        self.image_shifter = RuntimeImageShifter()
 
         self.image_transforms = IMAGE_TRANSFORMS
 
@@ -875,7 +922,7 @@ class BaseDataset(torch.utils.data.Dataset):
         )
 
     def is_latent_cacheable(self):
-        return all([not subset.color_aug and not subset.random_crop for subset in self.subsets])
+        return all([not subset.is_cacheable() for subset in self.subsets])
 
     def is_text_encoder_output_cacheable(self):
         return all(
@@ -1103,7 +1150,7 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_pool2_list = []
         mask_images = []
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
-            image_info = self.image_data[image_key]
+            image_info:ImageInfo = self.image_data[image_key]
             subset = self.image_to_subset[image_key]
             loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
             mask_images.append(image_info.mask)
@@ -1129,8 +1176,11 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 image = None
             else:
+                path_to_load = image_info.absolute_path
+                if image_info.shift_images:
+                    path_to_load = self.image_shifter.get_variation(path_to_load, image_info.shift_images)
                 # 画像を読み込み、必要ならcropする
-                img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, image_info.absolute_path)
+                img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, path_to_load)
                 im_h, im_w = img.shape[0:2]
 
                 if self.enable_bucket: # bucketingを有効にしている場合は、画像サイズをbucketに合わせる
@@ -1161,8 +1211,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 # augmentation
                 aug = self.aug_helper.get_augmentor(subset.color_aug)
-                if aug is not None:
-                    img = aug(image=img)["image"]
+                img = aug(image=img)["image"]
 
                 if flipped:
                     img = img[:, ::-1, :].copy()  # copy to avoid negative stride problem
@@ -1476,6 +1525,7 @@ class DreamBoothDataset(BaseDataset):
                 num_train_images += subset.num_repeats * len(img_paths)
                 
             mask_dir = subset.mask_dir
+            shift_images = subset.shift_images_dir
             if mask_dir is not None:
                 print(f"mask_dir is set to {mask_dir} / mask_dirが設定されています: {mask_dir}")
             any_mask_found = False
@@ -1494,6 +1544,10 @@ class DreamBoothDataset(BaseDataset):
                         mask_image = mask_image / 255
                         info.mask = mask_image
                         any_mask_found = True
+                if shift_images:
+                    assert os.path.isdir(shift_images), f"shift_images_dir is not a directory / shift_images_dirがディレクトリではありません: {shift_images}"
+                    assert len(os.listdir(shift_images)) > 0, f"shift_images_dir is empty / shift_images_dirが空です: {shift_images}"
+                    info.shift_images = shift_images
                         
                     
                 if subset.is_reg:
@@ -1620,7 +1674,7 @@ class FineTuningDataset(BaseDataset):
                 image_info = ImageInfo(image_key, subset.num_repeats, caption, False, abs_path)
                 image_info.image_size = img_md.get("train_resolution")
 
-                if not subset.color_aug and not subset.random_crop:
+                if subset.is_cacheable():
                     # if npz exists, use them
                     image_info.latents_npz, image_info.latents_npz_flipped = self.image_key_to_npz_file(subset, image_key)
 
@@ -1634,7 +1688,7 @@ class FineTuningDataset(BaseDataset):
             self.subsets.append(subset)
 
         # check existence of all npz files
-        use_npz_latents = all([not (subset.color_aug or subset.random_crop) for subset in self.subsets])
+        use_npz_latents = all([subset.is_cacheable() for subset in self.subsets])
         if use_npz_latents:
             flip_aug_in_subset = False
             npz_any = False
@@ -3270,6 +3324,10 @@ def add_dataset_arguments(
         default=None,
         help="dataset class for arbitrary dataset (package.module.Class) / 任意のデータセットを用いるときのクラス名 (package.module.Class)",
     )
+    
+    # mask_dir and shift_images_dir
+    parser.add_argument("--mask_dir", type=str, default=None, help="directory for mask images / マスク画像データのディレクトリ")
+    parser.add_argument("--shift_images_dir", type=str, default=None, help="directory for shift images / シフト画像データのディレクトリ")
 
     if support_caption_dropout:
         # Textual Inversion はcaptionのdropoutをsupportしない
@@ -3803,7 +3861,7 @@ def prepare_dataset_args(args: argparse.Namespace, support_metadata: bool):
         args.face_crop_aug_range = None
 
     if support_metadata:
-        if args.in_json is not None and (args.color_aug or args.random_crop):
+        if args.in_json is not None and (args.color_aug or args.random_crop or args.shift_images_dir):
             print(
                 f"latents in npz is ignored when color_aug or random_crop is True / color_augまたはrandom_cropを有効にした場合、npzファイルのlatentsは無視されます"
             )
