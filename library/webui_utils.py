@@ -275,9 +275,9 @@ def log_wandb(
         # log generation information to wandb
         global run_id
         if run_id is None:
-            run_id = wandb.run.id
+            run_id = wandb_tracker.run.id # get run id
         # resume if stopped
-        wandb.init(id=run_id, resume="must")
+        # wandb.init(id=run_id, resume="must")
         logging_caption_key = f"image_{index}"
         # remove invalid characters from the caption for filenames
         logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
