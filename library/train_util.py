@@ -922,7 +922,7 @@ class BaseDataset(torch.utils.data.Dataset):
         )
 
     def is_latent_cacheable(self):
-        return all([not subset.is_cacheable() for subset in self.subsets])
+        return all([subset.is_cacheable() for subset in self.subsets])
 
     def is_text_encoder_output_cacheable(self):
         return all(
