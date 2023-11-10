@@ -19,6 +19,8 @@ executor_thread_pool.submit(lambda: None) # submit dummy task to start thread
 any_error_occurred = False # this is used to check if any error occurred in thread pool executor
 error_obj = None # this is used to store error object if any error occurred in thread pool executor
 
+run_id = None # this is used to store run id for wandb
+
 def check_webui_state(): #throws exception if any error occurred in thread pool executor
     global any_error_occurred
     global error_obj
@@ -271,6 +273,11 @@ def log_wandb(
         except ImportError: 
             raise ImportError("No wandb / wandb がインストールされていないようです")
         # log generation information to wandb
+        global run_id
+        if run_id is None:
+            run_id = wandb.run.id
+        # resume if stopped
+        wandb.init(id=run_id, resume="must")
         logging_caption_key = f"image_{index}"
         # remove invalid characters from the caption for filenames
         logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)

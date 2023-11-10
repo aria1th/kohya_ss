@@ -722,24 +722,25 @@ class NetworkTrainer:
             accelerator.init_trackers(
                 "network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs
             )
-            try:
-                import wandb
-                wandb.define_metric("custom_step")
-                prompt_path = args.sample_prompts
-                # .txt then i = lines, json then i = length of list
-                if prompt_path.endswith(".txt"):
-                    with open(prompt_path, "r", encoding='utf-8') as f:
-                        i = len(f.readlines())
-                elif prompt_path.endswith(".json"):
-                    with open(prompt_path, "r", encoding='utf-8') as f:
-                        i = len(json.load(f))
-                elif args.webui_url is not None:
-                    raise ValueError("prompt_path for webui must be .txt or .json")
-                for _i in range(i):
-                    wandb.define_metric(f"image_{_i}", step_metric = "custom_step")
-                
-            except (ImportError, ModuleNotFoundError):
-                pass # wandb is not installed
+            if args.log_with in ["wandb", "all"]:
+                try:
+                    import wandb
+                    wandb.define_metric("custom_step")
+                    prompt_path = args.sample_prompts
+                    # .txt then i = lines, json then i = length of list
+                    if prompt_path.endswith(".txt"):
+                        with open(prompt_path, "r", encoding='utf-8') as f:
+                            i = len(f.readlines())
+                    elif prompt_path.endswith(".json"):
+                        with open(prompt_path, "r", encoding='utf-8') as f:
+                            i = len(json.load(f))
+                    elif args.webui_url is not None:
+                        raise ValueError("prompt_path for webui must be .txt or .json")
+                    for _i in range(i):
+                        wandb.define_metric(f"image_{_i}", step_metric = "custom_step")
+                    
+                except (ImportError, ModuleNotFoundError):
+                    pass # wandb is not installed
 
         loss_list = []
         loss_total = 0.0
