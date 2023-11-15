@@ -175,9 +175,10 @@ def save_configuration(
     full_bf16,
     min_timestep,
     max_timestep,
+    vae,
     external_webui_address:str = "",
     external_webui_auth:str = "", # "user:password"
-    webui_sample_json_file_path:str = "", # "sample.json"
+    webui_sample_json_file_path:str = "", # "sample.json",
 ):
     # Get list of function parameters and values
     parameters = list(locals().items())
@@ -330,6 +331,7 @@ def open_configuration(
     full_bf16,
     min_timestep,
     max_timestep,
+    vae,
     external_webui_address:str = "",
     external_webui_auth:str = "", # "user:password"
     webui_sample_json_file_path:str = "", # "sample.json"
@@ -507,6 +509,7 @@ def train_model(
     full_bf16,
     min_timestep,
     max_timestep,
+    vae,
     external_webui_address:str = "",
     external_webui_auth:str = "", # "user:password"
     webui_sample_json_file_path:str = "", # "sample.json"
@@ -1030,6 +1033,7 @@ def train_model(
         scale_v_pred_loss_like_noise_pred=scale_v_pred_loss_like_noise_pred,
         min_timestep=min_timestep,
         max_timestep=max_timestep,
+        vae=vae,
     )
 
     run_cmd += run_cmd_sample(
@@ -1616,7 +1620,7 @@ def lora_tab(
         
         button_start_tensorboard.click(
             start_tensorboard,
-            inputs=folders.logging_dir,
+            inputs=[dummy_headless, folders.logging_dir],
             show_progress=False,
         )
 
@@ -1736,6 +1740,7 @@ def lora_tab(
             advanced_training.full_bf16,
             advanced_training.min_timestep,
             advanced_training.max_timestep,
+            advanced_training.vae,
             sample_webui.external_webui_address,
             sample_webui.external_webui_auth,
             sample_webui.webui_sample_json_file_path
