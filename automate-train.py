@@ -34,9 +34,12 @@ def create_log_tracker_config(template_path_to_read:str, project_name, dict_args
     # read template, if not exist, but force_generate is true, create new template
     if not os.path.exists(template_path_to_read):
         if force_generate:
-            template = r'''[[[wandb]]]
-            name = "{0}"
-            '''
+            template = \
+r'''[wandb]
+    name = "{0}"
+    project = "{project_name}",
+    entity = "{entity}"
+'''
         else:
             raise OSError("Template path does not exist : "+template_path_to_read)
     else:
@@ -44,7 +47,9 @@ def create_log_tracker_config(template_path_to_read:str, project_name, dict_args
             template = f.read()
     merged_string = f"{project_name}_"+"_".join([f"{key}={value}" for key, value in dict_args.items() if key not in args_to_remove]) + "_" + generate_random_string()
     new_template = template.format(
-        merged_string
+        merged_string,
+        project_name=project_name,
+        entity="network_train_automated"
     )
     with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_toml_file:
         temp_toml_file.write(new_template)

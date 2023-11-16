@@ -49,13 +49,14 @@ def get_thread_pool_executor() -> ThreadPoolExecutor:
 def submit(func, job_name:str = "", *args, **kwargs):
     assert func is not None, "func cannot be None"
     global jobs, job_idx
-    jobs[job_idx] = False # mark job as not finished
-    jobs_explanation[job_idx] = job_name
+    local_job_idx = job_idx # we need to store job_idx locally because job_idx will be incremented
+    jobs[local_job_idx] = False # mark job as not finished
+    jobs_explanation[local_job_idx] = job_name
     def wrap_func_with_job(func):
         def wrapped_func(*args, **kwargs):
             try:
                 result = func(*args, **kwargs)
-                jobs[job_idx] = True
+                jobs[local_job_idx] = True
                 return result
             except Exception as e:
                 global any_error_occurred
@@ -63,11 +64,11 @@ def submit(func, job_name:str = "", *args, **kwargs):
                 any_error_occurred = True
                 error_obj = e
             finally:
-                jobs[job_idx] = True
+                jobs[local_job_idx] = True
         return wrapped_func
     job_idx += 1
     future = get_thread_pool_executor().submit(wrap_func_with_job(func), *args, **kwargs)
-    futures[job_idx] = future
+    futures[local_job_idx] = future
 
 def log_recent_message(message:str):
     global recent_messages
