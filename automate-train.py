@@ -65,11 +65,10 @@ def generate_config(**modified_kwargs) -> dict:
     modified_kwargs: dict of key, value pairs to be modified from default_configs
     If value is empty string or None, it will not be modified.
     """
-    global default_configs
     copied_config = default_configs.copy()
     for key, value in modified_kwargs.items():
         if key not in default_configs:
-            raise ValueError(f"key {key} not in default_configs")
+            print(f"key {key} not in default_configs")
         if value == "" or value is None:
             continue
         copied_config[key] = value
@@ -149,12 +148,12 @@ def convert_relative_path_to_absolute_path(dict_config:dict):
             dict_config[key] = os.path.abspath(value)
     return dict_config
 
-def generate_tuning_config(config, **modified_kwargs) -> dict:
+def generate_tuning_config(config_dict, **modified_kwargs) -> dict:
     """
     modified_kwargs: dict of key, value pairs to be modified from default_configs
     """
-    new_config = config.copy()
-    for keys in config.keys():
+    new_config = config_dict.copy()
+    for keys in config_dict.keys():
         # remove _list
         if keys.endswith('_list'):
             del new_config[keys]
