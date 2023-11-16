@@ -480,9 +480,10 @@ if __name__ == '__main__':
             thread.start()
             threads.append(thread)
             time.sleep(5) # wait for 5 seconds before starting next thread
-    for thread in threads: # wait for all threads to finish
+    for _i, thread in enumerate(threads): # wait for all threads to finish
         thread.join()
-        logging.info("All threads have completed execution")
+        logging.info(f"Thread {_i} finished execution")
+    logging.info("All threads have completed execution")
     
     if not args.debug:
         subprocess.check_call([execute_path, "merge_csv.py", "--path", last_tmp_dir, "--output", f"result_{project_name_base}.csv"])
