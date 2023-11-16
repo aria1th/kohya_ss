@@ -37,7 +37,6 @@ def create_log_tracker_config(template_path_to_read:str, project_name, dict_args
             template = \
 r'''[wandb]
     name = "{0}"
-    project = "{project_name}",
     entity = "{entity}"
 '''
         else:
