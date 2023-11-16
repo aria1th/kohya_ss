@@ -473,7 +473,8 @@ if __name__ == '__main__':
             devices = []
             while len(devices) < len(required_devices.split(',')):
                 # get device from queue
-                devices.append(device_queue.get())
+                device = device_queue.get()
+                devices.append(device)
                 logging.info(f"Allocated device {device} for command '{command}'")
             thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
             thread.start()
