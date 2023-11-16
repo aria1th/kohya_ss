@@ -156,6 +156,9 @@ def create_config():
     config_json["same_network"] = True
     config_json["gpu_ids"] = args.cuda_device
     config_json["num_processes"] = 1 if not args.cuda_device else len(args.cuda_device.split(','))
+    # if process is 1, set "distributed_type" to "NO"
+    if config_json["num_processes"] == 1:
+      config_json["distributed_type"] = "NO"
   with open(accelerate_config_file, 'w') as configfile:
     json.dump(config_json, configfile, indent=2)
   if resume:

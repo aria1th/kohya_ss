@@ -2,7 +2,7 @@ from pathlib import Path
 import torch
 import yaml
 
-def write_basic_config_yaml(save_location:str = "", gpu_ids:str="all") -> bool:
+def write_basic_config_yaml(save_location:str = "", gpu_ids:str="all", cuda_devices:str = "auto") -> bool:
     """
     Write a basic configuration file for accelerate.
     
@@ -53,7 +53,7 @@ def write_basic_config_yaml(save_location:str = "", gpu_ids:str="all") -> bool:
     }
     gpu_ids_list = gpu_ids.split(',')
     if gpu_ids == 'all':
-        config_dict['num_processes'] = torch.cuda.device_count()
+        config_dict['num_processes'] = torch.cuda.device_count() if cuda_devices.lower() == 'auto' else len(cuda_devices.split(','))
     else:
         config_dict['num_processes'] = len(gpu_ids_list)
     if config_dict['num_processes'] > 1:
