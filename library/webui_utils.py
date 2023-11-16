@@ -47,13 +47,16 @@ def get_thread_pool_executor() -> ThreadPoolExecutor:
     return executor_thread_pool
 
 def submit(func, job_name:str = "", *args, **kwargs):
+    assert func is not None, "func cannot be None"
     global jobs, job_idx
     jobs[job_idx] = False # mark job as not finished
     jobs_explanation[job_idx] = job_name
     def wrap_func_with_job(func):
         def wrapped_func(*args, **kwargs):
             try:
-                func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                jobs[job_idx] = True
+                return result
             except Exception as e:
                 global any_error_occurred
                 global error_obj
@@ -61,6 +64,7 @@ def submit(func, job_name:str = "", *args, **kwargs):
                 error_obj = e
             finally:
                 jobs[job_idx] = True
+        return wrapped_func
     job_idx += 1
     future = get_thread_pool_executor().submit(wrap_func_with_job(func), *args, **kwargs)
     futures[job_idx] = future
