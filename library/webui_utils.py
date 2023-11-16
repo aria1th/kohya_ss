@@ -19,7 +19,7 @@ executor_thread_pool.submit(lambda: None) # submit dummy task to start thread
 any_error_occurred = False # this is used to check if any error occurred in thread pool executor
 error_obj = None # this is used to store error object if any error occurred in thread pool executor
 
-run_id = None # this is used to store run id for wandb
+run_status = {} # this is used to store run id for wandb
 
 jobs = {} # this is used to store jobs in thread pool executor
 futures : Dict[int, Future] = {} # this is used to store futures in thread pool executor
@@ -331,11 +331,23 @@ def log_wandb(
         except ImportError: 
             raise ImportError("No wandb / wandb がインストールされていないようです")
         # log generation information to wandb
-        global run_id
-        if run_id is None:
-            run_id = wandb_tracker.run.id # get run id
-        # resume if stopped
-        # wandb.init(id=run_id, resume="must")
+        global run_status
+        if len(run_status) == 0:
+            # log run.project, run.entity, run.name, run.id
+            run_status.update({
+                'project' : wandb.run.project,
+                'entity' : wandb.run.entity,
+                'name' : wandb.run.name,
+                'id' : wandb.run.id,
+            })
+        was_wandb_finished = wandb.run._is_finished # pylint: disable=protected-access
+        if was_wandb_finished:
+            # resume run
+            wandb.run = wandb.init(id=run_status['id'],
+                                   resume="must", project=run_status['project'],
+                                     entity=run_status['entity'], name=run_status['name'])
+            # now we can log
+            wandb_tracker = wandb.run # overwrite wandb_tracker
         logging_caption_key = f"image_{index}"
         # remove invalid characters from the caption for filenames
         logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
@@ -346,6 +358,8 @@ def log_wandb(
             },
             commit=False
         )
+        if was_wandb_finished:
+            wandb.run.finish()
     except:  # wandb 無効時 # pylint: disable=bare-except
         pass
 
