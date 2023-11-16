@@ -12,7 +12,6 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-default_configs = {}
 execute_path = None
 last_tmp_dir = None
 project_name_base = None
@@ -80,7 +79,7 @@ def generate_random_string(length:int=6) -> str:
     return ''.join(random.choice(characters_to_use) for _ in range(length))
 
 
-def generate_config(**modified_kwargs) -> dict:
+def generate_config(default_configs, **modified_kwargs) -> dict:
     """
     modified_kwargs: dict of key, value pairs to be modified from default_configs
     If value is empty string or None, it will not be modified.
@@ -329,7 +328,7 @@ def main_iterator(args):
             print(f"skipping {config_without_log_tracker_config} because it is before index_to_skip")
             continue
         sets_executed_args.add(str(config_without_log_tracker_config))
-        config = generate_config(**temp_tuning_config,
+        config = generate_config(default_configs=default_configs,**temp_tuning_config,
                                 )
         # override args
         config['project_name_base'] = project_name_base if project_name_base != "BASE" else config['project_name_base']
@@ -362,9 +361,9 @@ def main_iterator(args):
         # add accelerate path
         command_inputs.append("--accelerate")
         command_inputs.append(accelerate_path)
-        yield command_inputs, config['cuda_device']
         train_id += 1
         last_tmp_dir = config['temp_dir']
+        yield command_inputs, config['cuda_device']
         
 def execute_command(command_args_list, cuda_devices_to_use, stop_event, device_queue):
     """
