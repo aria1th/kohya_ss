@@ -86,12 +86,14 @@ def wait_until_finished():
     if executor_thread_pool._broken: # pylint: disable=protected-access
         return # do nothing if thread pool is broken
     global jobs
-    if not all(jobs.values()):
+    while not all(jobs.values()):
         print(f"Waiting for jobs to finish... {len(jobs)} jobs left")
         print_jobs()
-        for idx, future in futures.items():
-            # wait for future to finish
-            future.result()
+        time.sleep(5)
+    # ensure all jobs are finished
+    for idx, future in futures.items():
+        # wait for future to finish
+        future.result()
     # wait until all threads are finished
     # future.result() will throw exception if any error occurred in thread pool executor
     executor_thread_pool.shutdown(wait=True)

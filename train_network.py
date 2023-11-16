@@ -990,7 +990,6 @@ class NetworkTrainer:
         if is_main_process:
             network = accelerator.unwrap_model(network)
             
-        wait_until_finished()
         if is_main_process:
             ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
@@ -998,6 +997,8 @@ class NetworkTrainer:
             if args.use_external_webui is True:
                 self.sample_images(accelerator, args, num_train_epochs, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
             print("model saved.")
+
+        wait_until_finished()
         accelerator.end_training()
 
         if is_main_process and args.save_state:
