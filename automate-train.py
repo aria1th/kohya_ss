@@ -230,7 +230,7 @@ def load_tuning_config(config_path:str):
 
 # generate_config('unet_lr' : 1e-5) -> returns new config modified with unet lr
 
-def main_iterator():
+def main_iterator(args):
     """
     Yields commands to be executed
     """
@@ -456,7 +456,7 @@ if __name__ == '__main__':
             
     threads = []
     stop_event = threading.Event()
-    for command, required_devices in main_iterator():
+    for command, required_devices in main_iterator(args):
         if stop_event.is_set():
             logging.info("Stopping further executions due to previous error")
             break
