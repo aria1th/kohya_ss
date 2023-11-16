@@ -22,7 +22,10 @@ error_obj = None # this is used to store error object if any error occurred in t
 run_id = None # this is used to store run id for wandb
 
 jobs = {} # this is used to store jobs in thread pool executor
+jobs_explanation = {} # this is used to store jobs explanation in thread pool executor
 job_idx = 0 # this is used to store job index in thread pool executor
+
+recent_messages = ["None"] # threads will append to this list
 
 def check_webui_state(): #throws exception if any error occurred in thread pool executor
     global any_error_occurred
@@ -34,6 +37,7 @@ def get_thread_pool_executor() -> ThreadPoolExecutor:
     # check if thread pool is shutdown, if so, restart
     global executor_thread_pool
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
+        print("Thread pool is shutdown, restarting...")
         executor_thread_pool = ThreadPoolExecutor(max_workers=1)
         executor_thread_pool.submit(lambda: None)
     # if thread pool is crashed, throw exception
@@ -41,9 +45,10 @@ def get_thread_pool_executor() -> ThreadPoolExecutor:
         raise RuntimeError("Thread pool is broken")
     return executor_thread_pool
 
-def submit(func, *args, **kwargs):
+def submit(func, job_name:str = "", *args, **kwargs):
     global jobs, job_idx
     jobs[job_idx] = False # mark job as not finished
+    jobs_explanation[job_idx] = job_name
     def wrap_func_with_job(func):
         def wrapped_func(*args, **kwargs):
             try:
@@ -57,7 +62,18 @@ def submit(func, *args, **kwargs):
                 jobs[job_idx] = True
     job_idx += 1
     get_thread_pool_executor().submit(wrap_func_with_job(func), *args, **kwargs)
-        
+
+def log_recent_message(message:str):
+    global recent_messages
+    recent_messages.append(message)
+    if len(recent_messages) > 10:
+        recent_messages = recent_messages[-10:]
+
+def print_jobs():
+    for idx, job in jobs.items():
+        if not job:
+            print(f"Job {idx} : {jobs_explanation[idx]}")
+    print(f"latest messages: {recent_messages[-1]}")
 def wait_until_finished():
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
         return
@@ -65,7 +81,8 @@ def wait_until_finished():
         return # do nothing if thread pool is broken
     global jobs
     while not all(jobs.values()):
-        print(f"Waiting for jobs to finish... {len(jobs)} jobs left)")
+        print(f"Waiting for jobs to finish... {len(jobs)} jobs left")
+        print_jobs()
         time.sleep(5)
     # wait until all threads are finished
     executor_thread_pool.shutdown(wait=True)
@@ -101,14 +118,15 @@ def wrap_sample_images_external_webui(
         )
     else:
         submit(sample_images_external_webui,
-            prompt_file_path,
-            output_dir_path,
-            output_name,
-            accelerator,
-            webui_url,
-            webui_auth,
-            abs_ckpt_path,
-            steps=steps
+            job_name=f"Sampling images at {steps} steps",
+            prompt_file_path = prompt_file_path,
+            output_dir_path = output_dir_path,
+            output_name = output_name,
+            accelerator = accelerator,
+            webui_url = webui_url,
+            webui_auth = webui_auth,
+            abs_ckpt_path =abs_ckpt_path,
+            steps=steps,
         )
         return True, "Sample request submitted to thread pool executor\n"
 
@@ -162,6 +180,7 @@ def sample_images_external_webui(
             return False, f"Invalid webui_auth format. Must be in the form of username:password, got {webui_auth}"
         webui_instance.set_auth(*webui_auth.split(':'))
     ping_response = ping_webui(webui_instance)
+    log_recent_message(f"WebUI at {webui_url} is reachable: {ping_response}")
     if ping_response is None:
         accelerator.print(f"WebUI at {webui_url} is not reachable")
         return False, f"WebUI at {webui_url} is not reachable"
@@ -169,17 +188,22 @@ def sample_images_external_webui(
     
     subdir = str(uuid.uuid4()) # generate random uuid for checkpoint name
     # the following function calls are thread-blocking so it is called and queued in a thread
+    log_recent_message(f"Uploading checkpoint to webui...")
     upload_success, message = upload_ckpt(webui_instance, abs_ckpt_path, subdir, custom_name=filename_with_timestamp)
     if not upload_success:
         accelerator.print(message)
         return False, message
+
     ckpt_name = filename_with_timestamp # checkpoint name
+    log_recent_message(f"Asserting checkpoint exists in webui...")
     _true, message_assertion = assert_lora(webui_instance, filename_with_timestamp, subdir) # assert lora exists
     # remove extension
+    log_recent_message(f"Refreshing lora...")
     refresh_lora(webui_instance) # refresh lora to make sure it is up to date
     sleep_task(3) # wait for 5 seconds to make sure lora is refreshed
     if '.' in ckpt_name:
         ckpt_name = ckpt_name[:ckpt_name.rindex('.')]
+    log_recent_message(f"Requesting sample...")
     sample_success, msg = request_sample(
         prompt_file_path,
         output_dir_path,
@@ -193,6 +217,7 @@ def sample_images_external_webui(
     if not sample_success:
         accelerator.print(msg)
         return False, msg
+    log_recent_message(f"Removing checkpoint from webui...")
     remove_success, msg_remove = remove_ckpt(webui_instance, ckpt_name + '.safetensors', subdir)
     msg += msg_remove
     if not remove_success:
