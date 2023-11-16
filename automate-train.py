@@ -1,5 +1,6 @@
 import subprocess
 import os
+import time
 import threading
 import queue
 from itertools import product
@@ -396,6 +397,9 @@ def execute_command(command_args_list, cuda_devices_to_use, stop_event, device_q
 
     if process.returncode != 0:
         logging.error(f"Command '{command}' failed with return code: {process.returncode}")
+        # print error message
+        logging.error(f"Error logs: {stdout.decode('utf-8')}")
+        logging.error(f"Error message: {stderr.decode('utf-8')}")
         stop_event.set()
     
     # get used cuda devices back to queue
@@ -474,6 +478,7 @@ if __name__ == '__main__':
             thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
             thread.start()
             threads.append(thread)
+            time.sleep(5) # wait for 5 seconds before starting next thread
     for thread in threads: # wait for all threads to finish
         thread.join()
         logging.info("All threads have completed execution")
