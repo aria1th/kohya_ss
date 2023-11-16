@@ -494,7 +494,10 @@ def add_extra_args(parser : argparse.ArgumentParser) -> List[str]:
   # mask threshold
   parser.add_argument('--mask_threshold', type=float, default=0.5, help='Mask threshold for the project (default: 0.5)')
   parser.add_argument('--process_title', type=str, default='LoRA', help='Process title for the project (default: LoRA)')
-  return ['zero_terminal_snr', 'v2', 'v_parameterization', 'mask_loss', 'mask_dir', 'mask_threshold', 'process_title']
+  #debiased_estimation_loss
+  parser.add_argument('--debiased_estimation_loss', type=str, default=False, help='Debiased estimation loss, see PR(default: False)')
+  return ['zero_terminal_snr', 'v2', 'v_parameterization', 'mask_loss', 'mask_dir', 'mask_threshold', 'process_title',
+          'debiased_estimation_loss']
 
 def add_optimizer_args(parser : argparse.ArgumentParser) -> List[str]:
   """
