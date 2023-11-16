@@ -9,7 +9,7 @@ import re
 import uuid
 import numpy as np
 from accelerate import Accelerator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from library.webuiapi.webuiapi import WebUIApi, ControlNetUnit, QueuedTaskResult
 from library.webuiapi.test_utils import open_controlnet_image, open_mask_image, raw_b64_img
 
@@ -22,6 +22,7 @@ error_obj = None # this is used to store error object if any error occurred in t
 run_id = None # this is used to store run id for wandb
 
 jobs = {} # this is used to store jobs in thread pool executor
+futures : Dict[int, Future] = {} # this is used to store futures in thread pool executor
 jobs_explanation = {} # this is used to store jobs explanation in thread pool executor
 job_idx = 0 # this is used to store job index in thread pool executor
 
@@ -61,7 +62,8 @@ def submit(func, job_name:str = "", *args, **kwargs):
             finally:
                 jobs[job_idx] = True
     job_idx += 1
-    get_thread_pool_executor().submit(wrap_func_with_job(func), *args, **kwargs)
+    future = get_thread_pool_executor().submit(wrap_func_with_job(func), *args, **kwargs)
+    futures[job_idx] = future
 
 def log_recent_message(message:str):
     global recent_messages
@@ -85,6 +87,10 @@ def wait_until_finished():
         print_jobs()
         time.sleep(5)
     # wait until all threads are finished
+    # future.result() will throw exception if any error occurred in thread pool executor
+    for idx, future in futures.items():
+        # wait for future to finish
+        future.result()
     executor_thread_pool.shutdown(wait=True)
 
 def wrap_sample_images_external_webui(
