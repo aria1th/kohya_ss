@@ -1,12 +1,22 @@
-import os
 import subprocess
+import os
+import threading
+import queue
 from itertools import product
 import argparse
 import json
 import random
 import tempfile
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 default_configs = {}
+execute_path = None
+last_tmp_dir = None
+project_name_base = None
+entity_name = None
 
 def update_config(tuning_config_path : str) -> None:
     """
@@ -220,37 +230,11 @@ def load_tuning_config(config_path:str):
 
 # generate_config('unet_lr' : 1e-5) -> returns new config modified with unet lr
 
-if __name__ == '__main__':
-
-    # check if venv is activated
-    # if not, activate venv
-    import sys
-    abs_path = os.path.abspath(__file__)
-    os.chdir(os.path.dirname(abs_path)) # execute from here
-    print(os.getcwd())
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--project_name_base', type=str, default='BASE')
-    parser.add_argument('--default_config_path', type=str, default='default_config.json')
-    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json')
-    # train_id_start
-    parser.add_argument('--train_id_start', type=int, default=0) #optional
-    # images_folder
-    parser.add_argument('--images_folder', type=str, default='') #optional
-    parser.add_argument('--model_file', type=str, default='') #optional
-    parser.add_argument('--port', type=str, default='') #optional
-    parser.add_argument('--cuda_device', type=str, default='') #optional
-    parser.add_argument('--debug', action='store_true', default=False) #optional
-    # venv path
-    parser.add_argument('--venv_path', type=str, default='') #optional
-    parser.add_argument('--skip_to_index', type=int, default=-1) #optional
-
-    # entity_name
-    parser.add_argument('--entity_name', type=str, default='', help= "entity name for wandb, leave empty for default") #optional
-    # python automate-train.py --project_name_base BASE --default_config_path default_config.json --tuning_config_path tuning_config.json 
-    # --train_id_start 0 --images_folder '' --model_file '' --port '' --cuda_device ''
-
-    args = parser.parse_args()
-    debug = args.debug
+def main_iterator():
+    """
+    Yields commands to be executed
+    """
+    global last_tmp_dir, execute_path, project_name_base
     project_name_base = args.project_name_base
     model_name = args.model_file
     images_folder = args.images_folder
@@ -378,11 +362,122 @@ if __name__ == '__main__':
         # add accelerate path
         command_inputs.append("--accelerate")
         command_inputs.append(accelerate_path)
-        if debug:
-            print(' '.join(command_inputs) + '\n')
-        else:
-            subprocess.check_call(command_inputs)
+        yield command_inputs, config['cuda_device']
         train_id += 1
         last_tmp_dir = config['temp_dir']
-    if not debug:
+        
+def execute_command(command_args_list, cuda_devices_to_use, stop_event, device_queue):
+    """
+    Execute a given command on specified CUDA devices.
+    Sets stop_event if process returncode is not 0.
+    Returns a dict of stdout, stderr, and returncode.
+    """
+    # find cuda_device in command_args_list and modify the next argument
+    cuda_device_index = -1
+    for index, args in enumerate(command_args_list):
+        if args == '--cuda_device':
+            cuda_device_index = index
+            break
+    if cuda_device_index == -1:
+        raise ValueError("cuda_device not found in command_args_list")
+    # replace cuda_device with cuda_devices_to_use
+    command_args_list[cuda_device_index+1] = ','.join(cuda_devices_to_use) # we have ['cuda_device', '0,1,2,3']... as replacement
+    try:
+        process = subprocess.Popen(command_args_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE) # start process with stdout and stderr
+        stdout, stderr = process.communicate() # get stdout and stderr
+        logging.info(f"Command '{command}' executed with devices {cuda_devices_to_use}. Return code: {process.returncode}")
+    except Exception as e:
+        logging.error(f"Error executing command '{command}': {e}")
+        stop_event.set()
+        return {
+            'stdout': '',
+            'stderr': str(e),
+            'returncode': -1
+        }
+
+    if process.returncode != 0:
+        logging.error(f"Command '{command}' failed with return code: {process.returncode}")
+        stop_event.set()
+    
+    # get used cuda devices back to queue
+    for device in cuda_devices_to_use:
+        device_queue.put(device)
+        logging.info(f"Released device {device} back to the queue")
+        
+    return {
+        'stdout': stdout.decode('utf-8'),
+        'stderr': stderr.decode('utf-8'),
+        'returncode': process.returncode
+    }
+    
+
+if __name__ == '__main__':
+    # check if venv is activated
+    # if not, activate venv
+    import sys
+    abs_path = os.path.abspath(__file__)
+    os.chdir(os.path.dirname(abs_path)) # execute from here
+    print(os.getcwd())
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--project_name_base', type=str, default='BASE')
+    parser.add_argument('--default_config_path', type=str, default='default_config.json')
+    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json')
+    # train_id_start
+    parser.add_argument('--train_id_start', type=int, default=0) #optional
+    # images_folder
+    parser.add_argument('--images_folder', type=str, default='') #optional
+    parser.add_argument('--model_file', type=str, default='') #optional
+    parser.add_argument('--port', type=str, default='') #optional
+    parser.add_argument('--cuda_device', type=str, default='') #optional
+    parser.add_argument('--debug', action='store_true', default=False) #optional
+    # venv path
+    parser.add_argument('--venv_path', type=str, default='') #optional
+    parser.add_argument('--skip_to_index', type=int, default=-1) #optional
+    # cuda devices that can be used for parallel training
+    # if empty, use from arguments
+    parser.add_argument('--cuda_devices_distributed', type=str, default='') #optional
+
+    # entity_name
+    parser.add_argument('--entity_name', type=str, default='', help= "entity name for wandb, leave empty for default") #optional
+    # python automate-train.py --project_name_base BASE --default_config_path default_config.json --tuning_config_path tuning_config.json 
+    # --train_id_start 0 --images_folder '' --model_file '' --port '' --cuda_device ''
+
+    args = parser.parse_args()
+    entity_name = args.entity_name
+    device_queue = queue.Queue()
+    if args.cuda_devices_distributed != '':
+        if args.cuda_devices_distributed == 'all':
+            # get cuda devices from environment variable
+            cuda_devices_distributed = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+        else:
+            cuda_devices_distributed = args.cuda_devices_distributed
+        for device in cuda_devices_distributed.split(','):
+            device_queue.put(device)
+            
+    threads = []
+    stop_event = threading.Event()
+    for command, required_devices in main_iterator():
+        if stop_event.is_set():
+            logging.info("Stopping further executions due to previous error")
+            break
+        if args.debug:
+            print(command)
+            continue
+        if args.cuda_devices_distributed == '':
+            # call subprocess.check_call
+            subprocess.check_call(command)
+        else:
+            devices = []
+            while len(devices) < len(required_devices.split(',')):
+                # get device from queue
+                devices.append(device_queue.get())
+                logging.info(f"Allocated device {device} for command '{command}'")
+            thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
+            thread.start()
+            threads.append(thread)
+    for thread in threads: # wait for all threads to finish
+        thread.join()
+        logging.info("All threads have completed execution")
+    
+    if not args.debug:
         subprocess.check_call([execute_path, "merge_csv.py", "--path", last_tmp_dir, "--output", f"result_{project_name_base}.csv"])
