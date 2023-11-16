@@ -82,15 +82,14 @@ def wait_until_finished():
     if executor_thread_pool._broken: # pylint: disable=protected-access
         return # do nothing if thread pool is broken
     global jobs
-    while not all(jobs.values()):
+    if not all(jobs.values()):
         print(f"Waiting for jobs to finish... {len(jobs)} jobs left")
         print_jobs()
-        time.sleep(5)
+        for idx, future in futures.items():
+            # wait for future to finish
+            future.result()
     # wait until all threads are finished
     # future.result() will throw exception if any error occurred in thread pool executor
-    for idx, future in futures.items():
-        # wait for future to finish
-        future.result()
     executor_thread_pool.shutdown(wait=True)
 
 def wrap_sample_images_external_webui(
