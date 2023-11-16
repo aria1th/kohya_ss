@@ -47,9 +47,15 @@ r'''[wandb]
     merged_string = f"{project_name}_"+"_".join([f"{key}={value}" for key, value in dict_args.items() if key not in args_to_remove]) + "_" + generate_random_string()
     new_template = template.format(
         merged_string,
-        project_name=project_name,
-        entity="network_train_automated"
+        entity=entity_name
     )
+    # if entity_name is None or "", remove entity line
+    if entity_name == "" or entity_name is None:
+        new_template_fixed = ""
+        for line in new_template.split('\n'):
+            if "entity" not in line:
+                new_template_fixed += line + '\n'
+        new_template = new_template_fixed
     with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_toml_file:
         temp_toml_file.write(new_template)
     return temp_toml_file.name
@@ -238,6 +244,8 @@ if __name__ == '__main__':
     parser.add_argument('--venv_path', type=str, default='') #optional
     parser.add_argument('--skip_to_index', type=int, default=-1) #optional
 
+    # entity_name
+    parser.add_argument('--entity_name', type=str, default='', help= "entity name for wandb, leave empty for default") #optional
     # python automate-train.py --project_name_base BASE --default_config_path default_config.json --tuning_config_path tuning_config.json 
     # --train_id_start 0 --images_folder '' --model_file '' --port '' --cuda_device ''
 
@@ -250,6 +258,7 @@ if __name__ == '__main__':
     venv_path = args.venv_path
     accelerate_path = 'accelerate' # default path
     index_to_skip = args.skip_to_index
+    entity_name = args.entity_name
     # handling venv
     if venv_path != '':
         execute_path = os.path.join(venv_path, 'bin', 'python')
