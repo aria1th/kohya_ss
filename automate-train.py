@@ -354,7 +354,7 @@ def main_iterator(args):
             config_port = 20060
         if config_port == previous_used_port:
             config['port'] = config_port + 1
-            previous_used_port = config_port + 1
+        previous_used_port = config['port']
         for keys in keys_to_remove:
             if keys in config:
                 del config[keys]
