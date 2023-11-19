@@ -50,21 +50,21 @@ def submit(func, job_name:str = "", *args, **kwargs):
     assert func is not None, "func cannot be None"
     global jobs, job_idx
     local_job_idx = job_idx # we need to store job_idx locally because job_idx will be incremented
-    jobs[local_job_idx] = False # mark job as not finished
+    jobs[local_job_idx] = 0 # mark job as not finished
     jobs_explanation[local_job_idx] = job_name
     def wrap_func_with_job(func):
         def wrapped_func(*args, **kwargs):
             try:
                 result = func(*args, **kwargs)
-                jobs[local_job_idx] = True
+                jobs[local_job_idx] = 1
                 return result
             except Exception as e:
                 global any_error_occurred
                 global error_obj
-                any_error_occurred = True
+                any_error_occurred = 1
                 error_obj = e
             finally:
-                jobs[local_job_idx] = True
+                jobs[local_job_idx] = 1
         return wrapped_func
     job_idx += 1
     future = get_thread_pool_executor().submit(wrap_func_with_job(func), *args, **kwargs)
@@ -88,7 +88,7 @@ def wait_until_finished():
         return # do nothing if thread pool is broken
     global jobs
     while not all(jobs.values()):
-        print(f"Waiting for jobs to finish... {len(jobs)} jobs left")
+        print(f"Waiting for jobs to finish... {len(jobs) - sum(jobs.values())} jobs remaining")
         print_jobs()
         time.sleep(5)
     # ensure all jobs are finished

@@ -9,6 +9,7 @@ import json
 import random
 import tempfile
 import logging
+from typing import List
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -464,32 +465,39 @@ if __name__ == '__main__':
         for device in cuda_devices_distributed.split(','):
             device_queue.put(device)
             
-    threads = []
+    threads:List[threading.Thread] = []
     stop_event = threading.Event()
-    for command, required_devices in main_iterator(args):
-        if stop_event.is_set():
-            logging.info("Stopping further executions due to previous error")
-            break
-        if args.debug:
-            print(command)
-            continue
-        if args.cuda_devices_distributed == '':
-            # call subprocess.check_call
-            subprocess.check_call(command)
-        else:
-            devices = []
-            while len(devices) < len(required_devices.split(',')):
-                # get device from queue
-                device = device_queue.get()
-                devices.append(device)
-                logging.info(f"Allocated device {device} for command '{command}'")
-            thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
-            thread.start()
-            threads.append(thread)
-            time.sleep(5) # wait for 5 seconds before starting next thread
-    for _i, thread in enumerate(threads): # wait for all threads to finish
-        thread.join()
-        logging.info(f"Thread {_i} finished execution")
+    try:
+        for command, required_devices in main_iterator(args):
+            if stop_event.is_set():
+                logging.info("Stopping further executions due to previous error")
+                break
+            if args.debug:
+                print(command)
+                continue
+            if args.cuda_devices_distributed == '':
+                # call subprocess.check_call
+                subprocess.check_call(command)
+            else:
+                devices = []
+                while len(devices) < len(required_devices.split(',')):
+                    # get device from queue
+                    device = device_queue.get()
+                    devices.append(device)
+                    logging.info(f"Allocated device {device} for command '{command}'")
+                thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
+                thread.start()
+                threads.append(thread)
+                time.sleep(5) # wait for 5 seconds before starting next thread
+        for _i, thread in enumerate(threads): # wait for all threads to finish
+            thread.join()
+            logging.info(f"Thread {_i} finished execution")
+    except KeyboardInterrupt:
+        # send kill signal to all threads
+        stop_event.set()
+        logging.warn("Keyboard interrupt received, stopping all threads, please wait...")
+        for thread in threads:
+            thread.join()
     logging.info("All threads have completed execution")
     
     if not args.debug:
