@@ -536,7 +536,9 @@ def request_sample(
         else:
             prompt["prompt"] = orig_prompt.replace(prompt["regex_to_replace"], ckpt_name)
         if "negative_prompt" in prompt: # well this is optional but suggested
-            prompt["negative_prompt"] = prompt["negative_prompt"].replace(prompt["regex_to_replace"], ckpt_name)
+            prompt["negative_prompt"] = prompt["negative_prompt"]
+            if 'regex_to_replace' in prompt:
+                prompt["negative_prompt"] = prompt["negative_prompt"].replace(prompt["regex_to_replace"], ckpt_name)
         # pop regex_to_replace
         prompt.pop("regex_to_replace")
         # pop controlnet params
