@@ -3936,7 +3936,10 @@ def prepare_accelerator(args: argparse.Namespace):
         logging_dir = None
     else:
         log_prefix = "" if args.log_prefix is None else args.log_prefix
-        logging_dir = args.logging_dir + "/" + log_prefix + time.strftime("%Y%m%d%H%M%S", time.localtime())
+        if args.log_with.lower() != "aim":
+            logging_dir = args.logging_dir + "/" + log_prefix + time.strftime("%Y%m%d%H%M%S", time.localtime())
+        else:
+            logging_dir = args.logging_dir # aim は日付を付けない
 
     if args.log_with is None:
         if logging_dir is not None:
