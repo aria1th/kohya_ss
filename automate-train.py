@@ -356,6 +356,7 @@ def main_iterator(args):
             while config_port in previous_used_ports:
                 config_port += 1
         previous_used_ports.add(config_port)
+        config['port'] = config_port
         for keys in keys_to_remove:
             if keys in config:
                 del config[keys]
