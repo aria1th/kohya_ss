@@ -76,20 +76,20 @@ def log_recent_message(message:str):
     if len(recent_messages) > 10:
         recent_messages = recent_messages[-10:]
 
-def print_jobs():
+def print_jobs(accelerator):
     for idx, job in jobs.items():
         if not job:
-            print(f"Job {idx} : {jobs_explanation[idx]}")
-    print(f"latest messages: {recent_messages[-1]}")
-def wait_until_finished():
+            accelerator.print(f"Job {idx} : {jobs_explanation[idx]}")
+    accelerator.print(f"latest messages: {recent_messages[-1]}")
+def wait_until_finished(accelerator:Accelerator):
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
         return
     if executor_thread_pool._broken: # pylint: disable=protected-access
         return # do nothing if thread pool is broken
     global jobs
     while not all(jobs.values()):
-        print(f"Waiting for jobs to finish... {len(jobs) - sum(jobs.values())} jobs remaining")
-        print_jobs()
+        accelerator.print(f"Waiting for jobs to finish... {len(jobs) - sum(jobs.values())} jobs remaining")
+        print_jobs(accelerator)
         time.sleep(5)
     # ensure all jobs are finished
     for idx, future in futures.items():
@@ -343,7 +343,7 @@ def log_aim(
             },
             step=steps,
         )
-    except:
+    except ImportError:
         pass
         
 def log_wandb(

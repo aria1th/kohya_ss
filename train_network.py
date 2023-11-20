@@ -1003,7 +1003,7 @@ class NetworkTrainer:
                 self.sample_images(accelerator, args, num_train_epochs, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
             print("model saved.")
 
-        wait_until_finished()
+        wait_until_finished(accelerator=accelerator)
         accelerator.end_training()
 
         if is_main_process and args.save_state:
