@@ -76,11 +76,12 @@ def log_recent_message(message:str):
     if len(recent_messages) > 10:
         recent_messages = recent_messages[-10:]
 
-def print_jobs(accelerator):
+def print_jobs(accelerator:Accelerator):
     for idx, job in jobs.items():
         if not job:
             accelerator.print(f"Job {idx} : {jobs_explanation[idx]}")
     accelerator.print(f"latest messages: {recent_messages[-1]}")
+    
 def wait_until_finished(accelerator:Accelerator):
     if executor_thread_pool._shutdown: # pylint: disable=protected-access
         return
@@ -316,8 +317,8 @@ def ping_webui(webui_instance:WebUIApi) -> bool:
         return False
     
 def log_images(*args, **kwargs):
-    log_aim(*args, **kwargs)
     log_wandb(*args, **kwargs)
+    log_aim(*args, **kwargs)
     
 def log_aim(
         accelerator:Accelerator,
@@ -343,7 +344,7 @@ def log_aim(
             },
             step=steps,
         )
-    except ImportError:
+    except:
         pass
         
 def log_wandb(
@@ -525,15 +526,15 @@ def request_sample(
         else:
             controlnet_units = []
             
-        if "regex_to_replace" not in prompt:
-            message += f"Invalid prompt format. Must include regex_to_replace, got {prompt}\n"
-            continue
         # replace regex_to_replace with ckpt_name, search in prompt and negative prompt
         if "prompt" not in prompt:
             message += f"Invalid prompt format. Must include prompt, got {prompt}\n"
             continue
         orig_prompt:str = prompt["prompt"]
-        prompt["prompt"] = orig_prompt.replace(prompt["regex_to_replace"], ckpt_name)
+        if "regex_to_replace" not in prompt:
+            prompt["prompt"] = orig_prompt + f" <lora:{ckpt_name}:1>"
+        else:
+            prompt["prompt"] = orig_prompt.replace(prompt["regex_to_replace"], ckpt_name)
         if "negative_prompt" in prompt: # well this is optional but suggested
             prompt["negative_prompt"] = prompt["negative_prompt"].replace(prompt["regex_to_replace"], ckpt_name)
         # pop regex_to_replace
