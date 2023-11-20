@@ -244,7 +244,7 @@ def main_iterator(args):
     accelerate_path = 'accelerate' # default path
     index_to_skip = args.skip_to_index
     entity_name = args.entity_name
-    previous_used_port = None
+    previous_used_ports = set()
     # handling venv
     if venv_path != '':
         execute_path = os.path.join(venv_path, 'bin', 'python')
@@ -352,9 +352,10 @@ def main_iterator(args):
         config_port = config.get('port', 20060)
         if config_port == '':
             config_port = 20060
-        if config_port == previous_used_port:
-            config['port'] = config_port + 1
-        previous_used_port = config['port']
+        if config_port in previous_used_ports:
+            while config_port in previous_used_ports:
+                config_port += 1
+        previous_used_ports.add(config_port)
         for keys in keys_to_remove:
             if keys in config:
                 del config[keys]
