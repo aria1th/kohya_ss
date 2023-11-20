@@ -729,8 +729,13 @@ class NetworkTrainer:
             init_kwargs = {}
             if args.log_tracker_config is not None:
                 init_kwargs = toml.load(args.log_tracker_config)
+            # if 'wandb.name' is specified, use it as the run name
+            if args.log_tracker_name is None:
+                proj_name = init_kwargs.get("wandb", {}).get("name", None)
+            else:
+                proj_name = args.log_tracker_name
             accelerator.init_trackers(
-                "network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs
+                "network_train" if proj_name is None else proj_name, init_kwargs=init_kwargs
             )
             if args.log_with in ["wandb", "all"]:
                 try:
