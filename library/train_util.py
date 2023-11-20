@@ -4872,6 +4872,25 @@ def sample_images_common(
                 )
             except:  # wandb 無効時
                 pass
+            # aim有効時のみログを送信
+            try:
+                aim_tracker = accelerator.get_tracker("aim")
+                try:
+                    import aim
+                except ImportError:  # 事前に一度確認するのでここはエラー出ないはず
+                    raise ImportError("No aim / aim がインストールされていないようです")
+                # log generation information to aim
+                logging_caption_key = f"prompt : {prompt} seed: {str(seed)}"
+                # remove invalid characters from the caption for filenames
+                logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
+                aim_tracker.log(
+                    {
+                        logging_caption_key: aim.Image(image, caption=f"negative_prompt: {negative_prompt}"),
+                    },
+                    step = steps,
+                )
+            except:
+                pass
 
     # clear pipeline and cache to reduce vram usage
     del pipeline

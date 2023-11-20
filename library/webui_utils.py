@@ -315,6 +315,37 @@ def ping_webui(webui_instance:WebUIApi) -> bool:
     except RuntimeError:
         return False
     
+def log_images(*args, **kwargs):
+    log_aim(*args, **kwargs)
+    log_wandb(*args, **kwargs)
+    
+def log_aim(
+        accelerator:Accelerator,
+        image:np.ndarray,
+        prompt:str,
+        negative_prompt:str,
+        seed:int,
+        steps:int=0,
+        index:int=0,
+):
+    try:
+        try:
+            import aim
+        except ImportError:
+            raise ImportError("No aim / aim がインストールされていないようです")
+        aim_tracker = accelerator.get_tracker("aim")
+        logging_caption_key = f"image_{index}"
+        # remove invalid characters from the caption for filenames
+        logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
+        aim_tracker.log(
+            {
+                logging_caption_key: aim.Image(image, caption=f"prompt: {prompt} negative_prompt: {negative_prompt} seed: {seed}"),
+            },
+            step=steps,
+        )
+    except:
+        pass
+        
 def log_wandb(
         accelerator:Accelerator,
         image:np.ndarray,
@@ -543,7 +574,7 @@ def request_sample(
                 error_obj = RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
                 raise RuntimeError(f"Image is None while waiting for result, task id: {queued_task_result.task_id}")
             image.save(os.path.join(output_dir_path, f"{output_name}_{strftime}_{i}.png"))
-            log_wandb(accelerator, image, orig_prompt, negative_prompt, seed, steps=steps, index=i)
+            log_images(accelerator, image, orig_prompt, negative_prompt, seed, steps=steps, index=i)
         wait_and_save(queued_task_result, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed)
         any_success = True
     if not any_success:
