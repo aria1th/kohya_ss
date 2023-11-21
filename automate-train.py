@@ -422,7 +422,17 @@ def execute_command(command_args_list, cuda_devices_to_use, stop_event, device_q
         'stderr': stderr.decode('utf-8'),
         'returncode': process.returncode
     }
-    
+
+def get_free_memory_gb(device_id) -> int:
+    """
+    Retrieves the free VRAM in GB for the specified CUDA device using Linux commands.
+    """
+    try:
+        output = subprocess.check_output(['nvidia-smi', '--query-gpu=memory.free', '--format=csv,noheader,nounits', '-i', str(device_id)], encoding='utf-8')
+        free_memory_mb = int(output.strip().split('\n', maxsplit=1)[0])
+        return round(free_memory_mb / 1024, 2)  # Convert MB to GB and round to 2 decimal places
+    except:
+        return 0
 
 if __name__ == '__main__':
     # check if venv is activated
@@ -449,6 +459,7 @@ if __name__ == '__main__':
     # cuda devices that can be used for parallel training
     # if empty, use from arguments
     parser.add_argument('--cuda_devices_distributed', type=str, default='') #optional
+    parser.add_argument('--cuda-memory-limit', type=int, default=0, help="When distributed training, If this is set, it will only use devices with enough memory. (GB)")
 
     # entity_name
     parser.add_argument('--entity_name', type=str, default='', help= "entity name for wandb, leave empty for default") #optional
@@ -458,6 +469,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     entity_name = args.entity_name
     device_queue = queue.Queue()
+    
+    cuda_devices_limit = args.cuda_memory_limit
     if args.cuda_devices_distributed != '':
         if args.cuda_devices_distributed == 'all':
             # get cuda devices from environment variable
@@ -485,6 +498,11 @@ if __name__ == '__main__':
                 while len(devices) < len(required_devices.split(',')):
                     # get device from queue
                     device = device_queue.get()
+                    if cuda_devices_limit > 0:
+                        if get_free_memory_gb(device) < cuda_devices_limit:
+                            logging.info(f"Device {device} does not have enough memory, skipping...")
+                            time.sleep(1)
+                            continue
                     devices.append(device)
                     logging.info(f"Allocated device {device} for command '{command}'")
                 thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
