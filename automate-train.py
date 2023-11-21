@@ -3,7 +3,7 @@ import os
 import time
 import threading
 import queue
-from itertools import product, repeat
+from itertools import product
 import argparse
 import json
 import random
@@ -273,7 +273,12 @@ def main_iterator(args):
     tuning_config = load_tuning_config(args.tuning_config_path)
     webui_urls = tuning_config.pop('webui_urls', None) # if exists, we will use this to override the webui_url argument
     if webui_urls is not None:
-        webui_url_iterator = repeat(webui_urls)
+        def webui_url_iterator_gen():
+            # infinite iterator
+            while True:
+                for webui_url in webui_urls:
+                    yield webui_url
+        webui_url_iterator = webui_url_iterator_gen()
     else:
         webui_url_iterator = None
 
