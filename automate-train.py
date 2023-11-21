@@ -3,7 +3,7 @@ import os
 import time
 import threading
 import queue
-from itertools import product
+from itertools import product, repeat
 import argparse
 import json
 import random
@@ -271,6 +271,11 @@ def main_iterator(args):
     train_id = args.train_id_start
     default_configs = load_default_config(args.default_config_path)
     tuning_config = load_tuning_config(args.tuning_config_path)
+    webui_urls = tuning_config.pop('webui_urls', None) # if exists, we will use this to override the webui_url argument
+    if webui_urls is not None:
+        webui_url_iterator = repeat(webui_urls)
+    else:
+        webui_url_iterator = None
 
     # warn if custom_dataset is not None
     if tuning_config['custom_dataset'] is not None:
@@ -357,6 +362,9 @@ def main_iterator(args):
                 config_port += 1
         previous_used_ports.add(config_port)
         config['port'] = config_port
+        # webui_url_iterator overriding
+        if webui_url_iterator is not None:
+            config['webui_url'] = next(webui_url_iterator)
         for keys in keys_to_remove:
             if keys in config:
                 del config[keys]
@@ -444,7 +452,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--project_name_base', type=str, default='BASE')
     parser.add_argument('--default_config_path', type=str, default='default_config.json')
-    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json')
+    parser.add_argument('--tuning_config_path', type=str, default='tuning_config.json', help="tuning config path. Special behavior : if webui_urls is specified, it will use iterator to override webui_url argument")
     # train_id_start
     parser.add_argument('--train_id_start', type=int, default=0) #optional
     # images_folder
