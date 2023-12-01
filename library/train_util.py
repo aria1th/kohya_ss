@@ -375,7 +375,7 @@ class AugHelper:
     # albumentationsへの依存をなくしたがとりあえず同じinterfaceを持たせる
 
     def __init__(self):
-        pass
+        self.default_aug = lambda image: {"image": image}
 
     def color_aug(self, image: np.ndarray):
         # self.color_aug_method = albu.OneOf(
@@ -405,7 +405,7 @@ class AugHelper:
         return {"image": image}
 
     def get_augmentor(self, use_color_aug: bool):  # -> Optional[Callable[[np.ndarray], Dict[str, np.ndarray]]]:
-        return self.color_aug if use_color_aug else lambda x: {"image": x}
+        return self.color_aug if use_color_aug else self.default_aug
 
 
 class BaseSubset:
