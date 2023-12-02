@@ -170,11 +170,9 @@ class ImageInfo:
         # mask informations, optional
         self.mask_path: Optional[str] = None
         # assert mask path
-        if self.mask_path is not None:
+        if self.mask_path:
             assert os.path.exists(self.mask_path), f"mask path {self.mask_path} does not exist for image {self.image_key} but specified"
             print(f"Mask path is specified as {self.mask_path} for image {self.image_key}.")
-        else:
-            print(f"Mask path is not specified for image {self.image_key}.")
         self.mask: Optional[torch.Tensor] = None # mask is a tensor of shape (1, 1, H, W)
         # shift_images
         self.shift_images: Optional[str] = None # shift_images is image path directory to find variations of the image
@@ -1169,6 +1167,8 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_outputs2_list = []
         text_encoder_pool2_list = []
         mask_images = []
+        image_size_logged = None
+        image_size_base = None
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
             image_info:ImageInfo = self.image_data[image_key]
             subset = self.image_to_subset[image_key]
@@ -1193,6 +1193,13 @@ class BaseDataset(torch.utils.data.Dataset):
                     latents = flipped_latents
                     del flipped_latents
                 latents = torch.FloatTensor(latents)
+                if image_size_logged is None:
+                    # 一度だけログを出す
+                    image_size_logged = latents.shape
+                    image_size_base = image_info.absolute_path
+                else:
+                    assert image_size_logged == latents.shape, f"latents shape mismatch / latentsのサイズが一定でないようです: {image_info.absolute_path}, bucket_reso={image_info.bucket_reso}, \
+                        latents.shape={latents.shape}, previous_latent.shape={image_size_logged}, from {image_size_base}"
 
                 image = None
             else:
