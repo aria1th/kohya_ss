@@ -664,7 +664,7 @@ if __name__ == "__main__":
   override_config_file = None
   optimizer_args = None
   continue_from_lora = ""
-  weighted_captions = True ## True로 하면 Weighted Caption 적용
+  weighted_captions = True if not is_sdxl else False ## True로 하면 Weighted Caption 적용
   adjust_tags = True
   keep_tokens_weight = 1.0 
   resolution = args.resolution
