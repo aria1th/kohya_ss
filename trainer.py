@@ -302,7 +302,7 @@ def main():
   # call .\venv\Scripts\activate.bat
   # set PATH=%PATH%;%~dp0venv\Lib\site-packages\torch\lib
     # windows, required user venv..
-  command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
+  command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py" if not is_sdxl else "sdxl_train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
   with open(os.path.join(log_folder, "accelerate_launch_commands_log.txt"), "a") as f:
     f.write(" ".join(command_list))
     
@@ -422,6 +422,8 @@ def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--xformers', type=str, default='False', help='Xformers for the project (default: False)')
   # precision_type
   parser.add_argument('--precision_type', type=str, default='bf16', help='Precision type for the project (default: bf16, available: bf16, fp32, fp16)')
+  # xl or normal
+  parser.add_argument('--sdxl', type=str, default='normal', help='Whether to use sdxl for the project (default: normal, available: normal, xl)')
   return []
 
 def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
@@ -615,6 +617,7 @@ if __name__ == "__main__":
   clip_skip = args.clip_skip
   color_aug = args.color_aug
   class_tokens = args.class_tokens
+  is_sdxl = args.sdxl
   
   xformers = args.xformers
   precision_type = args.precision_type
