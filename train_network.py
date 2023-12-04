@@ -9,6 +9,8 @@ import time
 import json
 from multiprocessing import Value
 import toml
+from library.hypertile import split_attention, flush
+from library.hypertile import set_seed as hypertile_set_seed
 
 from tqdm import tqdm
 import torch
@@ -166,6 +168,7 @@ class NetworkTrainer:
         if args.seed is None:
             args.seed = random.randint(0, 2**32)
         set_seed(args.seed)
+        hypertile_set_seed(args.seed)
 
         # tokenizerは単体またはリスト、tokenizersは必ずリスト：既存のコードとの互換性のため
         tokenizer = self.load_tokenizer(args)
@@ -849,9 +852,14 @@ class NetworkTrainer:
 
                     # Predict the noise residual
                     with accelerator.autocast():
-                        noise_pred = self.call_unet(
-                            args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
-                        )
+                        target_hw = batch["target_sizes_hw"] # torch.stack([torch.LongTensor(x) for x in target_sizes_hw])
+                        # width / height, as single float value
+                        aspect_ratio : float = (target_hw[:, 0] / target_hw[:, 1]).mean().item() 
+                        with split_attention(unet, aspect_ratio=aspect_ratio,
+                                             disable=not args.enable_hypertile):
+                            noise_pred = self.call_unet(
+                                args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
+                            )
 
                     if args.v_parameterization:
                         # v-parameterization training

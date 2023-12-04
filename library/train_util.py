@@ -2954,7 +2954,12 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="save training state additionally (including optimizer states etc.) / optimizerなど学習状態も含めたstateを追加で保存する",
     )
     parser.add_argument("--resume", type=str, default=None, help="saved state to resume training / 学習再開するモデルのstate")
-
+    # enable_hypertile
+    parser.add_argument(
+        "--enable_hypertile",
+        default=False,
+        help="enable hypertile (experimental) / hypertileを有効にする（実験的）",
+    )
     parser.add_argument("--train_batch_size", type=int, default=1, help="batch size for training / 学習時のバッチサイズ")
     parser.add_argument(
         "--max_token_length",
