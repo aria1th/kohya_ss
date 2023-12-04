@@ -540,7 +540,8 @@ def add_logging_args(parser: argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--wandb_api_key', type=str, default='', help='Wandb api key for the project (default: "")')
   #log_tracker_config : path to config file, default : None
   parser.add_argument('--log_tracker_config', type=str, default='none', help='Log tracker config for the project (default: "none")')
-  return ['log_with', 'wandb_api_key', 'log_tracker_config']
+  parser.add_argument('--log_tracker_name', type=str, default='LoRA', help='Log tracker name for the project (default: "LoRA")')
+  return ['log_with', 'wandb_api_key', 'log_tracker_config', 'log_tracker_name']
 
 def add_env_args(parser: argparse.ArgumentParser) -> List[str]:
   # env : 'accelerate'
