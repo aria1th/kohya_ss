@@ -16,3 +16,11 @@ def cleanup_image(img: np.ndarray) -> np.ndarray:
         y = guidedFilter(img, y, 4, 16)
 
     return y.clip(0, 255).astype(np.uint8)
+
+def pruned_svd_reconstruction(img: np.ndarray, k: int = 50) -> np.ndarray:
+    """
+    Reconstructs an image using the pruned SVD method.
+    Uses the first k singular values.
+    """
+    u, s, v = np.linalg.svd(img, full_matrices=False)
+    return (u[:, :k] @ np.diag(s[:k]) @ v[:k, :]).clip(0, 255).astype(np.uint8)
