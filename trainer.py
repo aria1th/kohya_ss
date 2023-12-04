@@ -423,7 +423,7 @@ def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
   # precision_type
   parser.add_argument('--precision_type', type=str, default='bf16', help='Precision type for the project (default: bf16, available: bf16, fp32, fp16)')
   # xl or normal
-  parser.add_argument('--sdxl', type=str, default='normal', help='Whether to use sdxl for the project (default: normal, available: normal, xl)')
+  parser.add_argument('--sdxl', type=bool, default=False, help='is model type SDXL for the project (default: False)')
   return []
 
 def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
