@@ -444,7 +444,7 @@ def get_free_memory_gb(device_id) -> int:
         output = subprocess.check_output(['nvidia-smi', '--query-gpu=memory.free', '--format=csv,noheader,nounits', '-i', str(device_id)], encoding='utf-8')
         free_memory_mb = int(output.strip().split('\n', maxsplit=1)[0])
         return round(free_memory_mb / 1024, 2)  # Convert MB to GB and round to 2 decimal places
-    except:
+    except: #pylint: disable=bare-except
         return 0
 
 if __name__ == '__main__':

@@ -302,7 +302,7 @@ def main():
   # call .\venv\Scripts\activate.bat
   # set PATH=%PATH%;%~dp0venv\Lib\site-packages\torch\lib
     # windows, required user venv..
-  command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
+  command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py" if not is_sdxl else "sdxl_train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
   with open(os.path.join(log_folder, "accelerate_launch_commands_log.txt"), "a") as f:
     f.write(" ".join(command_list))
     
@@ -422,6 +422,8 @@ def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--xformers', type=str, default='False', help='Xformers for the project (default: False)')
   # precision_type
   parser.add_argument('--precision_type', type=str, default='bf16', help='Precision type for the project (default: bf16, available: bf16, fp32, fp16)')
+  # xl or normal
+  parser.add_argument('--sdxl', type=bool, default=False, help='is model type SDXL for the project (default: False)')
   return []
 
 def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
@@ -538,7 +540,8 @@ def add_logging_args(parser: argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--wandb_api_key', type=str, default='', help='Wandb api key for the project (default: "")')
   #log_tracker_config : path to config file, default : None
   parser.add_argument('--log_tracker_config', type=str, default='none', help='Log tracker config for the project (default: "none")')
-  return ['log_with', 'wandb_api_key', 'log_tracker_config']
+  parser.add_argument('--log_tracker_name', type=str, default='LoRA', help='Log tracker name for the project (default: "LoRA")')
+  return ['log_with', 'wandb_api_key', 'log_tracker_config', 'log_tracker_name']
 
 def add_env_args(parser: argparse.ArgumentParser) -> List[str]:
   # env : 'accelerate'
@@ -615,6 +618,7 @@ if __name__ == "__main__":
   clip_skip = args.clip_skip
   color_aug = args.color_aug
   class_tokens = args.class_tokens
+  is_sdxl = args.sdxl
   
   xformers = args.xformers
   precision_type = args.precision_type
@@ -661,7 +665,7 @@ if __name__ == "__main__":
   override_config_file = None
   optimizer_args = None
   continue_from_lora = ""
-  weighted_captions = True ## True로 하면 Weighted Caption 적용
+  weighted_captions = True if not is_sdxl else False ## True로 하면 Weighted Caption 적용
   adjust_tags = True
   keep_tokens_weight = 1.0 
   resolution = args.resolution
