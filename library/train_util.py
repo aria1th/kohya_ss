@@ -65,6 +65,7 @@ from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipel
 import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
+from library.cleanup_util import cleanup_image
 
 from library.webui_utils import wrap_sample_images_external_webui, check_webui_state
 
@@ -429,6 +430,7 @@ class BaseSubset:
         token_warmup_step: Union[float, int],
         mask_dir: Optional[str] = None,
         shift_images_dir: Optional[str] = None,
+        cleanup_noise: bool = False,
     ) -> None:
         self.image_dir = image_dir
         self.num_repeats = num_repeats
@@ -449,6 +451,8 @@ class BaseSubset:
         
         self.mask_dir = mask_dir    # mask directory that is used for training
         self.shift_images_dir = shift_images_dir # shift_images directory that is used for training
+        
+        self.cleanup_noise = cleanup_noise
 
         self.img_count = 0
         
@@ -479,6 +483,7 @@ class DreamBoothSubset(BaseSubset):
         token_warmup_step,
         mask_dir: Optional[str] = None,
         shift_images_dir: Optional[str] = None,
+        cleanup_noise: bool = False,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -500,6 +505,7 @@ class DreamBoothSubset(BaseSubset):
             token_warmup_step,
             mask_dir=mask_dir,
             shift_images_dir=shift_images_dir,
+            cleanup_noise=cleanup_noise,
         )
 
         self.is_reg = is_reg
@@ -535,6 +541,7 @@ class FineTuningSubset(BaseSubset):
         token_warmup_step,
         mask_dir: Optional[str] = None,
         shift_images_dir: Optional[str] = None,
+        cleanup_noise: bool = False,
     ) -> None:
         assert metadata_file is not None, "metadata_file must be specified / metadata_fileは指定が必須です"
 
@@ -556,6 +563,7 @@ class FineTuningSubset(BaseSubset):
             token_warmup_step,
             mask_dir=mask_dir,
             shift_images_dir=shift_images_dir,
+            cleanup_noise=cleanup_noise
         )
 
         self.metadata_file = metadata_file
@@ -588,6 +596,7 @@ class ControlNetSubset(BaseSubset):
         token_warmup_step,
         mask_dir: Optional[str] = None,
         shift_images_dir: Optional[str] = None,
+        cleanup_noise: bool = False,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -609,6 +618,7 @@ class ControlNetSubset(BaseSubset):
             token_warmup_step,
             mask_dir=mask_dir,
             shift_images_dir=shift_images_dir,
+            cleanup_noise=cleanup_noise,
         )
 
         self.conditioning_data_dir = conditioning_data_dir
@@ -653,6 +663,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.bucket_reso_steps = None
         self.bucket_no_upscale = None
         self.bucket_info = None  # for metadata
+        self.cleanup_noise = False
 
         self.tokenizer_max_length = self.tokenizers[0].model_max_length if max_token_length is None else max_token_length + 2
 
@@ -1082,7 +1093,8 @@ class BaseDataset(torch.utils.data.Dataset):
         The image should have <filename>_cx_cy_w_h.jpg format for augmentation.
         """
         img = load_image(image_path)
-
+        if subset.cleanup_noise:
+            image = cleanup_image(image)
         face_cx = face_cy = face_w = face_h = 0
         if subset.face_crop_aug_range is not None:
             tokens = os.path.splitext(os.path.basename(image_path))[0].split("_") # example filename : aaaaaa_<face_cx>_<face_cy>_<face_w>_<face_h>.jpg
@@ -1381,6 +1393,8 @@ class BaseDataset(torch.utils.data.Dataset):
 
             if self.caching_mode == "latents":
                 image = load_image(image_info.absolute_path)
+                if subset.cleanup_noise:
+                    image = cleanup_image(image)
             else:
                 image = None
 
