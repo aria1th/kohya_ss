@@ -519,6 +519,7 @@ if __name__ == '__main__':
                     devices.append(device)
                     logging.info(f"Allocated device {device} for command '{command}'")
                 thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
+                thread.daemon = True # process will exit when main thread exits
                 thread.start()
                 threads.append(thread)
                 time.sleep(5) # wait for 5 seconds before starting next thread
