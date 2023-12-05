@@ -694,7 +694,7 @@ if __name__ == "__main__":
   min_snr_gamma_value = args.min_snr_gamma_value if min_snr_gamma else None
   lora_type = args.lora_type #@param ["LoRA", "LoCon Lycoris", "LoHa Lycoris"]
   conv_compression = False #@param {type:"boolean"}
-  network_module = "lycoris.kohya" if "Lycoris" in lora_type else "networks.lora"
+  network_module = "lycoris.kohya" if "lycoris" in lora_type.lower() else "networks.lora"
   network_args = [
     "down_lr_weight="+','.join(str(x) for x in down_lr_weight),
     "up_lr_weight="+','.join(str(x) for x in up_lr_weight),
@@ -703,9 +703,12 @@ if __name__ == "__main__":
   if lora_type != "LoRA":
     network_args.append(f"conv_dim={conv_dim}")
     network_args.append(f"conv_alpha={conv_alpha}")
-  if "Lycoris" in lora_type:
-    network_args.append(f"algo={'loha' if 'LoHa' in lora_type else 'lora'}")
-    network_args.append(f"disable_conv_cp={str(not conv_compression)}")
+  if "lycoris" in lora_type.lower():
+    # strip Lycoris or lycoris from lycoris.*
+    lora_type = lora_type.replace("Lycoris", "").replace("lycoris", "").strip()
+    network_args.append(f"algo={lora_type}")
+    #network_args.append(f"disable_conv_cp={str(not conv_compression)}")
+    network_args.append(f"preset=full") # see C:\projects\kohya_ss\LyCORIS\lycoris\config.py
   save_state = False #param {type:"boolean"}
   resume = False #param {type:"boolean"}
 
