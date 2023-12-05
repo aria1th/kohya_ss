@@ -424,7 +424,9 @@ def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--precision_type', type=str, default='bf16', help='Precision type for the project (default: bf16, available: bf16, fp32, fp16)')
   # xl or normal
   parser.add_argument('--sdxl', type=bool, default=False, help='is model type SDXL for the project (default: False)')
-  return []
+  # enable_hypertile
+  parser.add_argument('--enable_hypertile', type=bool, default=False, help='Enable hypertile for the project (default: False)')
+  return ['enable_hypertile']
 
 def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
   """
