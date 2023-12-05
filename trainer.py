@@ -707,7 +707,7 @@ if __name__ == "__main__":
     network_args.append(f"conv_alpha={conv_alpha}")
   if "lycoris" in lora_type.lower():
     # strip Lycoris or lycoris from lycoris.*
-    lora_type = lora_type.replace("Lycoris", "").replace("lycoris", "").strip()
+    lora_type = lora_type.replace("Lycoris", "").replace("lycoris", "").strip('.').strip()
     network_args.append(f"algo={lora_type}")
     #network_args.append(f"disable_conv_cp={str(not conv_compression)}")
     network_args.append(f"preset=full") # see C:\projects\kohya_ss\LyCORIS\lycoris\config.py
