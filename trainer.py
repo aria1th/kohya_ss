@@ -450,7 +450,9 @@ def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
   # add 17-length list input for text/down/middle/up lr weight parsing
   parser.add_argument('--lbw_weights', type=str, default='',
                       help='Optional 16 or 17-length list input for text/down/middle/up lr weight parsing (default: ""), this will disable other block lr arguments')
-  return []
+  # ip_noise_gamma
+  parser.add_argument('--ip_noise_gamma', type=float, default=0.0, help='IP noise gamma for the project (default: 0.0)')
+  return ['ip_noise_gamma']
 
 def add_gor_args(parser: argparse.ArgumentParser)-> List[str]:
     parser.add_argument("--gor_num_groups", type=int, default=32, help="number of groups for group orthogonality regularization")
