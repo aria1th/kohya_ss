@@ -305,6 +305,14 @@ def main():
   command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py" if not is_sdxl else "sdxl_train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
   with open(os.path.join(log_folder, "accelerate_launch_commands_log.txt"), "a") as f:
     f.write(" ".join(command_list))
+  # init aim if required with aim init --repo <log_folder>
+  if log_with in ('aim', 'all'):
+    # check if .aim folder exists
+    if not os.path.exists(os.path.join(log_folder, '.aim')):
+      print("Initializing aim at "+log_folder)
+      subprocess.check_call(["aim", "init", "--repo", log_folder])
+    else:
+      print("Aim already initialized at "+log_folder)
     
   subprocess.check_call(command_list,
                         shell=True if os.name == 'nt' else False)
@@ -577,6 +585,7 @@ if __name__ == "__main__":
   
   # random_crop should be parsed from extra_args_dict
   random_crop = extra_args_dict['random_crop']
+  log_with = extra_args_dict['log_with']
   
   try:
     down_lr_weight = literal_eval(args.down_lr_weight)

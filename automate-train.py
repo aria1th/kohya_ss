@@ -292,7 +292,6 @@ def main_iterator(args):
     if tuning_config['log_tracker_config_template'] != 'none':
         template_path = tuning_config['log_tracker_config_template']
         del tuning_config['log_tracker_config_template']
-                
     list_arguments_name = {}
     for arguments, values in tuning_config.items():
         if arguments.endswith('_list'):
@@ -519,7 +518,7 @@ if __name__ == '__main__':
                     devices.append(device)
                     logging.info(f"Allocated device {device} for command '{command}'")
                 thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
-                thread.daemon = True # process will exit when main thread exits
+                thread.daemon = True # to stop thread when main thread exits
                 thread.start()
                 threads.append(thread)
                 time.sleep(5) # wait for 5 seconds before starting next thread
