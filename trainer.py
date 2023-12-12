@@ -76,8 +76,7 @@ def validate_dataset():
       raise Exception("Empty folder")
   for f in files:
     if not f.lower().endswith(".txt") and not f.lower().endswith(supported_types):
-      print(f"💥 Error: Invalid file in dataset: \"{f}\". Aborting.")
-      raise Exception("Invalid file")
+      print(f"💥 Warn: Invalid file in dataset: \"{f}\".")
 
   if not [txt for txt in files if txt.lower().endswith(".txt")]:
     caption_extension = ""
