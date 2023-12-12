@@ -403,6 +403,8 @@ def add_lora_args(parser : argparse.ArgumentParser) -> List[str]:
                       help='Alpha value for the convolutional layers (default: 1)')
   parser.add_argument('--lora_type', type=str, default='LoRA', help='LoRA type for the project (default: LoRA)')
   parser.add_argument('--lycoris_preset', type=str, default='full', help='Lycoris preset for the project (default: full)')
+  # train_network_norm
+  parser.add_argument('--train_network_norm', type=str, default='True', help='Train network norm for the project (default: True)')
   return []
 
 def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
@@ -708,6 +710,7 @@ if __name__ == "__main__":
   lora_type = args.lora_type #@param ["LoRA", "LoCon Lycoris", "LoHa Lycoris"]
   lycoris_preset = args.lycoris_preset #@param ["full", "attn-mlp"]
   conv_compression = False #@param {type:"boolean"}
+  train_network_norm = args.train_network_norm #@param {type:"boolean"}
   network_module = "lycoris.kohya" if "lycoris" in lora_type.lower() else "networks.lora"
   network_args = [
     "down_lr_weight="+','.join(str(x) for x in down_lr_weight),
@@ -723,6 +726,9 @@ if __name__ == "__main__":
     network_args.append(f"algo={lora_type}")
     #network_args.append(f"disable_conv_cp={str(not conv_compression)}")
     network_args.append(f"preset={lycoris_preset}") # see C:\projects\kohya_ss\LyCORIS\lycoris\config.py
+    # "train_norm=True"
+    network_args.append(f"train_norm={train_network_norm}")
+    print("Using Lycoris with network args : ", network_args)
   save_state = False #param {type:"boolean"}
   resume = False #param {type:"boolean"}
 
