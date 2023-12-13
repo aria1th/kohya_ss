@@ -542,17 +542,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
     tagger_config_args = get_tagger_config(args.tagger_config_path)
     entity_name = args.entity_name
-    # get accelerator path
+    # get python executable path
     if args.venv_path != '':
-        accelerate_path = os.path.join(args.venv_path, 'bin', 'accelerate')
-        if not os.path.exists(accelerate_path):
-            accelerate_path = 'accelerate'
+        python_path = os.path.join(args.venv_path, 'bin', 'python')
+        if not os.path.exists(python_path):
+            raise ValueError(f"venv not found at {args.venv_path}")
     else:
-        accelerate_path = 'accelerate'
+        python_path = sys.executable
     if args.autotag:
         print("Autotagging datasets...")
         # accelerate launch './finetune/tag_images_by_wd14_tagger.py' --batch_size=8 --general_threshold=0.35 --character_threshold=0.35 --caption_extension=".txt" --model="SmilingWolf/wd-v1-4-moat-tagger-v2" --max_data_loader_n_workers=2 --recursive --debug --remove_underscore --frequency_tags --onnx --append_tags --force_download --undesired_tags="['nsfw']" "./train"
-        tagger_command = [accelerate_path, 'launch', './finetune/tag_images_by_wd14_tagger.py']
+        tagger_command = [python_path, "tag_images_by_wd14_tagger.py"]
         for keys, values in tagger_config_args.items():
             # if values is True, add --keys only
             tagger_command.append(f"--{keys}")
