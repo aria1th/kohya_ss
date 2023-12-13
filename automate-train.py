@@ -11,6 +11,8 @@ import tempfile
 import logging
 from typing import List, Set
 
+import toml
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -450,33 +452,32 @@ def read_toml(path:str) -> List[str]:
     """
     Reads toml file, and returns list of image folders
     """
-    import toml
     target_image_dirs = []
     with open(path, 'r', encoding='utf-8') as f:
         toml_data = toml.load(f)
     datasets = toml_data['datasets']
-    for subsets_dict in datasets.values():
+    for subsets_dict in datasets:
         subsets_list = subsets_dict['subsets']
         for subset in subsets_list:
             target_image_dirs.append(subset['image_dir'])
     return target_image_dirs
 
-def get_dataset_folders(tuning_config:dict) -> Set[str]:
+def get_dataset_folders(loaded_config:dict) -> Set[str]:
     """
-    Parses tuning_config to get dataset folders
+    Parses loaded_config to get dataset folders
     target : custom_dataset / custom_dataset_list / images_folder / images_folder_list
     """
-    tuning_config = tuning_config.copy()
+    loaded_config = loaded_config.copy()
     dataset_folders = []
-    if tuning_config.get('custom_dataset', None) is not None:
-        dataset_folders.extend(read_toml(tuning_config['custom_dataset']))
-    if tuning_config.get('custom_dataset_list', None) is not None:
-        for custom_dataset in tuning_config['custom_dataset_list']:
+    if loaded_config.get('custom_dataset', None) is not None:
+        dataset_folders.extend(read_toml(loaded_config['custom_dataset']))
+    if loaded_config.get('custom_dataset_list', None) is not None:
+        for custom_dataset in loaded_config['custom_dataset_list']:
             dataset_folders.extend(read_toml(custom_dataset))
-    if tuning_config.get('images_folder', None) is not None:
-        dataset_folders.append(tuning_config['images_folder'])
-    if tuning_config.get('images_folder_list', None) is not None:
-        dataset_folders.extend(tuning_config['images_folder_list'])
+    if loaded_config.get('images_folder', None) is not None:
+        dataset_folders.append(loaded_config['images_folder'])
+    if loaded_config.get('images_folder_list', None) is not None:
+        dataset_folders.extend(loaded_config['images_folder_list'])
     dataset_folders = set(dataset_folders)
     return dataset_folders
 
