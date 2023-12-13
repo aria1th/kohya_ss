@@ -1309,7 +1309,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 captions.append(caption)
             elif image_info.text_encoder_outputs_npz is not None:
                 text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2, \
-                text_encoder_outputs1_without_cls, text_encoder_outputs2_without_cls, text_encoder_pool2_without_cls = = load_text_encoder_outputs_from_disk(
+                text_encoder_outputs1_without_cls, text_encoder_outputs2_without_cls, text_encoder_pool2_without_cls = load_text_encoder_outputs_from_disk(
                     image_info.text_encoder_outputs_npz
                 )
                 text_encoder_outputs1_list.append(text_encoder_outputs1)
