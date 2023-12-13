@@ -1412,6 +1412,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
         example["captions"] = captions
+        example["captions_without_cls"] = [cap.replace(cls_tokens, "") for cap, cls_tokens in zip(captions, cls_tokens_list)]
 
         example["original_sizes_hw"] = torch.stack([torch.LongTensor(x) for x in original_sizes_hw])
         example["crop_top_lefts"] = torch.stack([torch.LongTensor(x) for x in crop_top_lefts])

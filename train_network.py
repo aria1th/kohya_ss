@@ -845,6 +845,14 @@ class NetworkTrainer:
                                 args.max_token_length // 75 if args.max_token_length else 1,
                                 clip_skip=args.clip_skip,
                             )
+                            text_encoder_conds_b = get_weighted_text_embeddings(
+                                tokenizer,
+                                text_encoder,
+                                batch["captions_without_cls"],
+                                accelerator.device,
+                                args.max_token_length // 75 if args.max_token_length else 1,
+                                clip_skip=args.clip_skip,
+                            )
                         else:
                             text_encoder_conds, text_encoder_conds_b = self.get_text_cond(
                                 args, accelerator, batch, tokenizers, text_encoders, weight_dtype
@@ -1162,6 +1170,8 @@ if __name__ == "__main__":
     parser = setup_parser()
 
     args = parser.parse_args()
+    # debug
+    print(f" Train with contrastive learning : {args.contrastive_class_learning}")
     args = train_util.read_config_from_file(args, parser)
     trainer = NetworkTrainer()
     trainer.train(args)
