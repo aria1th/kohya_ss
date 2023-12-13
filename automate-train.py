@@ -556,8 +556,10 @@ if __name__ == '__main__':
         tagger_command = [accelerate_path,"launch", "--num_processes", "1",  "./finetune/tag_images_by_wd14_tagger.py"]
         for keys, values in tagger_config_args.items():
             # if values is True, add --keys only
-            tagger_command.append(f"--{keys}")
-            if values is not True:
+            if values is True:
+                tagger_command.append(f"--{keys}")
+            if values not in [True, False]:
+                tagger_command.append(f"--{keys}")
                 tagger_command.append(str(values))
         # get images folders from tuning config / images_folder
         images_folders = set()
