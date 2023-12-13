@@ -9,7 +9,7 @@ import json
 import random
 import tempfile
 import logging
-from typing import List
+from typing import List, Set
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -446,6 +446,65 @@ def get_free_memory_gb(device_id) -> int:
     except: #pylint: disable=bare-except
         return 0
 
+def read_toml(path:str) -> List[str]:
+    """
+    Reads toml file, and returns list of image folders
+    """
+    import toml
+    target_image_dirs = []
+    with open(path, 'r', encoding='utf-8') as f:
+        toml_data = toml.load(f)
+    datasets = toml_data['datasets']
+    for subsets_dict in datasets.values():
+        subsets_list = subsets_dict['subsets']
+        for subset in subsets_list:
+            target_image_dirs.append(subset['image_dir'])
+    return target_image_dirs
+
+def get_dataset_folders(tuning_config:dict) -> Set[str]:
+    """
+    Parses tuning_config to get dataset folders
+    target : custom_dataset / custom_dataset_list / images_folder / images_folder_list
+    """
+    tuning_config = tuning_config.copy()
+    dataset_folders = []
+    if tuning_config.get('custom_dataset', None) is not None:
+        dataset_folders.extend(read_toml(tuning_config['custom_dataset']))
+    if tuning_config.get('custom_dataset_list', None) is not None:
+        for custom_dataset in tuning_config['custom_dataset_list']:
+            dataset_folders.extend(read_toml(custom_dataset))
+    if tuning_config.get('images_folder', None) is not None:
+        dataset_folders.append(tuning_config['images_folder'])
+    if tuning_config.get('images_folder_list', None) is not None:
+        dataset_folders.extend(tuning_config['images_folder_list'])
+    dataset_folders = set(dataset_folders)
+    return dataset_folders
+
+def get_tagger_config(config_path):
+    """
+    config_path: path to json file containing default configs
+    Loads default configs from json file, and returns a dict of configs
+    """
+    # batch_size 8, general_threshold 0.35, character_threshold 0.35, caption_extension ".txt", model SmilingWolf/wd-v1-4-moat-tagger-v2,
+    # max_data_loader_n_workers 2
+    default_config_tagger = {
+            'batch_size' : 8,
+            'general_threshold' : 0.35,
+            'character_threshold' : 0.35,
+            'caption_extension' : '.txt',
+            'model' : 'SmilingWolf/wd-v1-4-moat-tagger-v2',
+            'max_data_loader_n_workers' : 2,
+            'recursive' : True,
+    }
+    if config_path == '' or not os.path.exists(config_path):
+        return default_config_tagger
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config_tagger = json.load(f)
+    for k, v in default_config_tagger.items():
+        if k not in config_tagger:
+            config_tagger[k] = v
+    return config_tagger
+
 if __name__ == '__main__':
     # check if venv is activated
     # if not, activate venv
@@ -477,9 +536,40 @@ if __name__ == '__main__':
     parser.add_argument('--entity_name', type=str, default='', help= "entity name for wandb, leave empty for default") #optional
     # python automate-train.py --project_name_base BASE --default_config_path default_config.json --tuning_config_path tuning_config.json 
     # --train_id_start 0 --images_folder '' --model_file '' --port '' --cuda_device ''
-
+    parser.add_argument('--autotag', action='store_true', default=False, help="If true, it will tag the datasets used for training, will override the default tag")
+    parser.add_argument('--tagger_config_path', type=str, default='tagger_config.json', help="tagger config path")
     args = parser.parse_args()
+    tagger_config_args = get_tagger_config(args.tagger_config_path)
     entity_name = args.entity_name
+    # get accelerator path
+    if args.venv_path != '':
+        accelerate_path = os.path.join(args.venv_path, 'bin', 'accelerate')
+        if not os.path.exists(accelerate_path):
+            accelerate_path = 'accelerate'
+    else:
+        accelerate_path = 'accelerate'
+    if args.autotag:
+        print("Autotagging datasets...")
+        # accelerate launch './finetune/tag_images_by_wd14_tagger.py' --batch_size=8 --general_threshold=0.35 --character_threshold=0.35 --caption_extension=".txt" --model="SmilingWolf/wd-v1-4-moat-tagger-v2" --max_data_loader_n_workers=2 --recursive --debug --remove_underscore --frequency_tags --onnx --append_tags --force_download --undesired_tags="['nsfw']" "./train"
+        tagger_command = [accelerate_path, 'launch', './finetune/tag_images_by_wd14_tagger.py']
+        for keys, values in tagger_config_args.items():
+            tagger_command.append(f"--{keys}")
+            tagger_command.append(str(values))
+        # get images folders from tuning config / images_folder
+        images_folders = set()
+        tuning_config = load_tuning_config(args.tuning_config_path)
+        # do same stuff for default config
+        default_config = load_default_config(args.default_config_path)
+        images_folders.update(get_dataset_folders(default_config))
+        images_folders.update(get_dataset_folders(tuning_config))
+        commands = []
+        for images_folder in images_folders:
+            commands.append(tagger_command + [images_folder])
+        for _i, command in enumerate(commands):
+            print(f"Tagger command : {command}, {_i}/{len(commands)}")
+            print(command)
+            subprocess.check_call(command)
+
     device_queue = queue.Queue()
     
     cuda_devices_limit = args.cuda_memory_limit
