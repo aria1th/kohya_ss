@@ -876,6 +876,9 @@ class NetworkTrainer:
                             )
                             if args.contrastive_class_learning:
                                 # call without lora
+                                # temporary debug
+                                print(f"text_encoder_conds_b: {text_encoder_conds_b}")
+                                print(f"text_encoder_conds_orig: {text_encoder_conds}")
                                 prev_multiplier = network.multiplier
                                 network.set_multiplier(0.0)
                                 noise_pred_vanilla = self.call_unet(
