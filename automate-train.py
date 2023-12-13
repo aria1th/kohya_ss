@@ -619,7 +619,7 @@ if __name__ == '__main__':
                             time.sleep(1)
                             continue
                     devices.append(device)
-                    logging.info(f"Allocated device {device} for command '{command}'")
+                    logging.info(f"Allocated device {devices} for command '{command}'")
                 thread = threading.Thread(target=execute_command, args=(command, devices, stop_event, device_queue))
                 thread.daemon = True # to stop thread when main thread exits
                 thread.start()
