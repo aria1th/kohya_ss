@@ -552,7 +552,7 @@ if __name__ == '__main__':
     if args.autotag:
         print("Autotagging datasets...")
         # accelerate launch './finetune/tag_images_by_wd14_tagger.py' --batch_size=8 --general_threshold=0.35 --character_threshold=0.35 --caption_extension=".txt" --model="SmilingWolf/wd-v1-4-moat-tagger-v2" --max_data_loader_n_workers=2 --recursive --debug --remove_underscore --frequency_tags --onnx --append_tags --force_download --undesired_tags="['nsfw']" "./train"
-        tagger_command = [python_path, "tag_images_by_wd14_tagger.py"]
+        tagger_command = [python_path, '-m' "tag_images_by_wd14_tagger.py"]
         for keys, values in tagger_config_args.items():
             # if values is True, add --keys only
             tagger_command.append(f"--{keys}")
