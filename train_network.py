@@ -933,6 +933,8 @@ class NetworkTrainer:
                         loss_vanilla = torch.nn.functional.mse_loss(noise_pred_vanilla.float(), noise_pred_with_lora.float(), reduction="none")
                         loss_vanilla = loss_vanilla.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
                         loss = loss + loss_vanilla * args.contrastive_class_learning_weight
+                    else:
+                        loss_vanilla = None
 
                     loss_weights = batch["loss_weights"]  # 各sampleごとのweight
                     loss = loss * loss_weights
@@ -1001,6 +1003,8 @@ class NetworkTrainer:
                     logs = self.generate_step_logs(args, current_loss, avr_loss, lr_scheduler, keys_scaled, mean_norm, maximum_norm)
                     if loss_residual is not None:
                         logs["loss/residual"] = loss_residual.mean().item()
+                    if loss_vanilla is not None:
+                        logs["loss/vanilla"] = loss_vanilla.mean().item()
                     accelerator.log(logs, step=global_step)
 
                 if global_step >= args.max_train_steps:
