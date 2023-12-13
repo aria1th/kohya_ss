@@ -152,7 +152,7 @@ class ImageInfo:
         self.caption: str = caption
         self.is_reg: bool = is_reg
         self.absolute_path: str = absolute_path
-        self.class_tokens: Optional[str] = cls_tokens
+        self.class_tokens: Optional[str] = class_tokens
         self.image_size: Tuple[int, int] = None
         self.resized_size: Tuple[int, int] = None
         self.bucket_reso: Tuple[int, int] = None
@@ -662,6 +662,9 @@ class BaseDataset(torch.utils.data.Dataset):
         self.current_step: int = 0
         self.max_train_steps: int = 0
         self.seed: int = 0
+        
+        # DreamBooth 
+        self.prior_loss_weight: float = 0.0
 
         # augmentation
         self.aug_helper = AugHelper()
