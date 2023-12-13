@@ -875,7 +875,7 @@ class NetworkTrainer:
                                 )
                                 network.set_multiplier(prev_multiplier)
                                 noise_pred_with_lora = self.call_unet(
-                                    args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
+                                    args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
                                 )
                             else:
                                 noise_pred_vanilla = None
