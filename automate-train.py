@@ -553,7 +553,7 @@ if __name__ == '__main__':
         print("Autotagging datasets...")
         # use num_processes 1 to avoid deadlock
         # accelerate launch './finetune/tag_images_by_wd14_tagger.py' --batch_size=8 --general_threshold=0.35 --character_threshold=0.35 --caption_extension=".txt" --model="SmilingWolf/wd-v1-4-moat-tagger-v2" --max_data_loader_n_workers=2 --recursive --debug --remove_underscore --frequency_tags --onnx --append_tags --force_download --undesired_tags="['nsfw']" "./train"
-        tagger_command = [accelerate_path, "--num_processes", "1", "launch", "./finetune/tag_images_by_wd14_tagger.py"]
+        tagger_command = [accelerate_path,"launch", "--num_processes", "1",  "./finetune/tag_images_by_wd14_tagger.py"]
         for keys, values in tagger_config_args.items():
             # if values is True, add --keys only
             tagger_command.append(f"--{keys}")
