@@ -554,8 +554,10 @@ if __name__ == '__main__':
         # accelerate launch './finetune/tag_images_by_wd14_tagger.py' --batch_size=8 --general_threshold=0.35 --character_threshold=0.35 --caption_extension=".txt" --model="SmilingWolf/wd-v1-4-moat-tagger-v2" --max_data_loader_n_workers=2 --recursive --debug --remove_underscore --frequency_tags --onnx --append_tags --force_download --undesired_tags="['nsfw']" "./train"
         tagger_command = [accelerate_path, 'launch', './finetune/tag_images_by_wd14_tagger.py']
         for keys, values in tagger_config_args.items():
+            # if values is True, add --keys only
             tagger_command.append(f"--{keys}")
-            tagger_command.append(str(values))
+            if values is not True:
+                tagger_command.append(str(values))
         # get images folders from tuning config / images_folder
         images_folders = set()
         tuning_config = load_tuning_config(args.tuning_config_path)
@@ -570,11 +572,13 @@ if __name__ == '__main__':
             if not os.path.exists(images_folder):
                 print(f"Images folder {images_folder} does not exist, skipping...")
                 continue
-            commands.append(tagger_command + [images_folder])
+            command_list = tagger_command.copy() + [images_folder]
+            command_to_execute = ' '.join(command_list)
+            commands.append(command_to_execute)
         for _i, command in enumerate(commands):
             print(f"Tagger command : {command}, {_i}/{len(commands)}")
             print(command)
-            subprocess.check_call(command)
+            subprocess.run(command, shell=True,check=True)
 
     device_queue = queue.Queue()
     
