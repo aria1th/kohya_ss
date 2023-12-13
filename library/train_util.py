@@ -146,12 +146,13 @@ def search_mask(image_path:str, mask_dir:str) -> Optional[str]:
     return mask_path
 
 class ImageInfo:
-    def __init__(self, image_key: str, num_repeats: int, caption: str, is_reg: bool, absolute_path: str) -> None:
+    def __init__(self, image_key: str, num_repeats: int, caption: str, is_reg: bool, absolute_path: str, class_tokens: Optional[str] = None) -> None:
         self.image_key: str = image_key # image_key is a unique key for each image
         self.num_repeats: int = num_repeats
         self.caption: str = caption
         self.is_reg: bool = is_reg
         self.absolute_path: str = absolute_path
+        self.class_tokens: Optional[str] = cls_tokens
         self.image_size: Tuple[int, int] = None
         self.resized_size: Tuple[int, int] = None
         self.bucket_reso: Tuple[int, int] = None
@@ -714,7 +715,10 @@ class BaseDataset(torch.utils.data.Dataset):
     def add_replacement(self, str_from, str_to):
         self.replacements[str_from] = str_to
 
-    def process_caption(self, subset: BaseSubset, caption):
+    def process_caption(self, subset: BaseSubset, caption, class_tokens:Optional[str] = None):
+        """
+        captionに対して前処理を行う
+        """
         # caption に prefix/suffix を付ける
         if subset.caption_prefix:
             caption = subset.caption_prefix + " " + caption
@@ -730,7 +734,7 @@ class BaseDataset(torch.utils.data.Dataset):
         )
 
         if is_drop_out:
-            caption = ""
+            caption = "" if class_tokens is None else class_tokens
         else:
             if subset.shuffle_caption or subset.token_warmup_step > 0 or subset.caption_tag_dropout_rate > 0:
                 tokens = [t.strip() for t in caption.strip().split(",")]
@@ -778,56 +782,79 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return caption
 
-    def get_input_ids(self, caption, tokenizer=None):
+    def get_input_ids(self, caption, tokenizer=None, class_tokens:Optional[str] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        captionをtokenizerで処理し、input_idsを返す
+        tokenizerがNoneの場合はself.tokenizers[0]を使う
+        class_tokensがNoneの場合はcaptionからclass_tokensを除いたものを使う
+        """
         if tokenizer is None:
             tokenizer = self.tokenizers[0]
 
         input_ids = tokenizer(
             caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
         ).input_ids
+        if class_tokens is None:
+            input_ids_without_class_tokens = input_ids.clone()
+        else:
+            pre_caption = caption.replace(class_tokens, "").strip()
+            input_ids_without_class_tokens = tokenizer(
+                pre_caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
+            ).input_ids
+        def get_ids(input_ids):
+            if self.tokenizer_max_length > tokenizer.model_max_length:
+                input_ids = input_ids.squeeze(0)
+                iids_list = []
+                if tokenizer.pad_token_id == tokenizer.eos_token_id:
+                    # v1
+                    # 77以上の時は "<BOS> .... <EOS> <EOS> <EOS>" でトータル227とかになっているので、"<BOS>...<EOS>"の三連に変換する
+                    # 1111氏のやつは , で区切る、とかしているようだが　とりあえず単純に
+                    for i in range(
+                        1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2
+                    ):  # (1, 152, 75)
+                        ids_chunk = (
+                            input_ids[0].unsqueeze(0),
+                            input_ids[i : i + tokenizer.model_max_length - 2],
+                            input_ids[-1].unsqueeze(0),
+                        )
+                        ids_chunk = torch.cat(ids_chunk)
+                        iids_list.append(ids_chunk)
+                else:
+                    # v2 or SDXL
+                    # 77以上の時は "<BOS> .... <EOS> <PAD> <PAD>..." でトータル227とかになっているので、"<BOS>...<EOS> <PAD> <PAD> ..."の三連に変換する
+                    for i in range(1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2):
+                        ids_chunk = (
+                            input_ids[0].unsqueeze(0),  # BOS
+                            input_ids[i : i + tokenizer.model_max_length - 2],
+                            input_ids[-1].unsqueeze(0),
+                        )  # PAD or EOS
+                        ids_chunk = torch.cat(ids_chunk)
 
-        if self.tokenizer_max_length > tokenizer.model_max_length:
-            input_ids = input_ids.squeeze(0)
-            iids_list = []
-            if tokenizer.pad_token_id == tokenizer.eos_token_id:
-                # v1
-                # 77以上の時は "<BOS> .... <EOS> <EOS> <EOS>" でトータル227とかになっているので、"<BOS>...<EOS>"の三連に変換する
-                # 1111氏のやつは , で区切る、とかしているようだが　とりあえず単純に
-                for i in range(
-                    1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2
-                ):  # (1, 152, 75)
-                    ids_chunk = (
-                        input_ids[0].unsqueeze(0),
-                        input_ids[i : i + tokenizer.model_max_length - 2],
-                        input_ids[-1].unsqueeze(0),
-                    )
-                    ids_chunk = torch.cat(ids_chunk)
-                    iids_list.append(ids_chunk)
-            else:
-                # v2 or SDXL
-                # 77以上の時は "<BOS> .... <EOS> <PAD> <PAD>..." でトータル227とかになっているので、"<BOS>...<EOS> <PAD> <PAD> ..."の三連に変換する
-                for i in range(1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2):
-                    ids_chunk = (
-                        input_ids[0].unsqueeze(0),  # BOS
-                        input_ids[i : i + tokenizer.model_max_length - 2],
-                        input_ids[-1].unsqueeze(0),
-                    )  # PAD or EOS
-                    ids_chunk = torch.cat(ids_chunk)
+                        # 末尾が <EOS> <PAD> または <PAD> <PAD> の場合は、何もしなくてよい
+                        # 末尾が x <PAD/EOS> の場合は末尾を <EOS> に変える（x <EOS> なら結果的に変化なし）
+                        if ids_chunk[-2] != tokenizer.eos_token_id and ids_chunk[-2] != tokenizer.pad_token_id:
+                            ids_chunk[-1] = tokenizer.eos_token_id
+                        # 先頭が <BOS> <PAD> ... の場合は <BOS> <EOS> <PAD> ... に変える
+                        if ids_chunk[1] == tokenizer.pad_token_id:
+                            ids_chunk[1] = tokenizer.eos_token_id
 
-                    # 末尾が <EOS> <PAD> または <PAD> <PAD> の場合は、何もしなくてよい
-                    # 末尾が x <PAD/EOS> の場合は末尾を <EOS> に変える（x <EOS> なら結果的に変化なし）
-                    if ids_chunk[-2] != tokenizer.eos_token_id and ids_chunk[-2] != tokenizer.pad_token_id:
-                        ids_chunk[-1] = tokenizer.eos_token_id
-                    # 先頭が <BOS> <PAD> ... の場合は <BOS> <EOS> <PAD> ... に変える
-                    if ids_chunk[1] == tokenizer.pad_token_id:
-                        ids_chunk[1] = tokenizer.eos_token_id
+                        iids_list.append(ids_chunk)
 
-                    iids_list.append(ids_chunk)
-
-            input_ids = torch.stack(iids_list)  # 3,77
-        return input_ids
+                input_ids = torch.stack(iids_list)  # 3,77
+                return input_ids
+        caption_ids = get_ids(input_ids)
+        if class_tokens is None:
+            caption_ids_without_class_tokens = get_ids(input_ids_without_class_tokens)
+        else:
+            caption_ids_without_class_tokens = caption_ids.clone()
+        return caption_ids, caption_ids_without_class_tokens
 
     def register_image(self, info: ImageInfo, subset: BaseSubset):
+        """
+        Registers image info to the dataset's internal data structure.
+        info: ImageInfo
+        subset: BaseSubset
+        """
         self.image_data[info.image_key] = info
         self.image_to_subset[info.image_key] = subset
 
@@ -1050,9 +1077,9 @@ class BaseDataset(torch.utils.data.Dataset):
         batch = []
         batches = []
         for info in image_infos_to_cache:
-            input_ids1 = self.get_input_ids(info.caption, tokenizers[0])
-            input_ids2 = self.get_input_ids(info.caption, tokenizers[1])
-            batch.append((info, input_ids1, input_ids2))
+            input_ids1, ids_without_cls1 = self.get_input_ids(info.caption, tokenizers[0], info.class_tokens)
+            input_ids2, ids_without_cls2 = self.get_input_ids(info.caption, tokenizers[1], info.class_tokens)
+            batch.append((info, input_ids1, input_ids2, ids_without_cls1, ids_without_cls2))
 
             if len(batch) >= self.batch_size:
                 batches.append(batch)
@@ -1064,11 +1091,12 @@ class BaseDataset(torch.utils.data.Dataset):
         # iterate batches: call text encoder and cache outputs for memory or disk
         print("caching text encoder outputs...")
         for batch in tqdm(batches):
-            infos, input_ids1, input_ids2 = zip(*batch)
+            infos, input_ids1, input_ids2, ids_without_cls1, ids_without_cls2 = zip(*batch)
             input_ids1 = torch.stack(input_ids1, dim=0)
             input_ids2 = torch.stack(input_ids2, dim=0)
             cache_batch_text_encoder_outputs(
-                infos, tokenizers, text_encoders, self.max_token_length, cache_to_disk, input_ids1, input_ids2, weight_dtype
+                infos, tokenizers, text_encoders, self.max_token_length, cache_to_disk, input_ids1, input_ids2, weight_dtype,
+                ids_without_cls1, ids_without_cls2
             )
 
     def get_image_size(self, image_path):
@@ -1157,6 +1185,8 @@ class BaseDataset(torch.utils.data.Dataset):
         captions = []
         input_ids_list = []
         input_ids2_list = []
+        input_ids_list_without_cls = []
+        input_ids2_list_without_cls = []
         latents_list = []
         images = []
         original_sizes_hw = []
@@ -1166,11 +1196,16 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_outputs1_list = []
         text_encoder_outputs2_list = []
         text_encoder_pool2_list = []
+        cls_tokens_list = []
+        text_encoder_outputs1_without_cls_list = []
+        text_encoder_outputs2_without_cls_list = []
+        text_encoder_pool2_without_cls_list = []
         mask_images = []
         image_size_logged = None
         image_size_base = None
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
             image_info:ImageInfo = self.image_data[image_key]
+            cls_tokens_list.append(image_info.class_tokens)
             subset = self.image_to_subset[image_key]
             loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
             mask_images.append(image_info.mask)
@@ -1268,17 +1303,24 @@ class BaseDataset(torch.utils.data.Dataset):
                 text_encoder_outputs1_list.append(image_info.text_encoder_outputs1)
                 text_encoder_outputs2_list.append(image_info.text_encoder_outputs2)
                 text_encoder_pool2_list.append(image_info.text_encoder_pool2)
+                text_encoder_outputs1_without_cls_list.append(image_info.text_encoder_outputs1_without_cls)
+                text_encoder_outputs2_without_cls_list.append(image_info.text_encoder_outputs2_without_cls)
+                text_encoder_pool2_without_cls_list.append(image_info.text_encoder_pool2_without_cls)
                 captions.append(caption)
             elif image_info.text_encoder_outputs_npz is not None:
-                text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2 = load_text_encoder_outputs_from_disk(
+                text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2, \
+                text_encoder_outputs1_without_cls, text_encoder_outputs2_without_cls, text_encoder_pool2_without_cls = = load_text_encoder_outputs_from_disk(
                     image_info.text_encoder_outputs_npz
                 )
                 text_encoder_outputs1_list.append(text_encoder_outputs1)
                 text_encoder_outputs2_list.append(text_encoder_outputs2)
                 text_encoder_pool2_list.append(text_encoder_pool2)
+                text_encoder_outputs1_without_cls_list.append(text_encoder_outputs1_without_cls)
+                text_encoder_outputs2_without_cls_list.append(text_encoder_outputs2_without_cls)
+                text_encoder_pool2_without_cls_list.append(text_encoder_pool2_without_cls)
                 captions.append(caption)
             else:
-                caption = self.process_caption(subset, image_info.caption)
+                caption = self.process_caption(subset, image_info.caption, image_info.class_tokens)
                 if self.XTI_layers:
                     caption_layer = []
                     for layer in self.XTI_layers:
@@ -1292,17 +1334,19 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 if not self.token_padding_disabled:  # this option might be omitted in future
                     if self.XTI_layers:
-                        token_caption = self.get_input_ids(caption_layer, self.tokenizers[0])
+                        token_caption, token_caption_without_cls = self.get_input_ids(caption_layer, self.tokenizers[0])
                     else:
-                        token_caption = self.get_input_ids(caption, self.tokenizers[0])
+                        token_caption, token_caption_without_cls = self.get_input_ids(caption, self.tokenizers[0])
                     input_ids_list.append(token_caption)
+                    input_ids_list_without_cls.append(token_caption_without_cls)
 
                     if len(self.tokenizers) > 1:
                         if self.XTI_layers:
-                            token_caption2 = self.get_input_ids(caption_layer, self.tokenizers[1])
+                            token_caption2, token_caption_without_cls2 = self.get_input_ids(caption_layer, self.tokenizers[1])
                         else:
-                            token_caption2 = self.get_input_ids(caption, self.tokenizers[1])
+                            token_caption2, token_caption_without_cls2 = self.get_input_ids(caption, self.tokenizers[1])
                         input_ids2_list.append(token_caption2)
+                        input_ids2_list_without_cls.append(token_caption_without_cls2)
 
         example = {}
         example["loss_weights"] = torch.FloatTensor(loss_weights)
@@ -1310,28 +1354,50 @@ class BaseDataset(torch.utils.data.Dataset):
         if len(text_encoder_outputs1_list) == 0:
             if self.token_padding_disabled:
                 # padding=True means pad in the batch
+                captions_copy = captions.copy()
+                # using cls_tokens_list to remove cls tokens from each caption
+                for i, caption in enumerate(captions_copy):
+                    captions_copy[i] = caption.replace(cls_tokens_list[i], "")
                 example["input_ids"] = self.tokenizer[0](captions, padding=True, truncation=True, return_tensors="pt").input_ids
+                example["input_ids_without_cls"] = self.tokenizer[0](
+                    captions_copy, padding=True, truncation=True, return_tensors="pt"
+                ).input_ids
+                
                 if len(self.tokenizers) > 1:
                     example["input_ids2"] = self.tokenizer[1](
                         captions, padding=True, truncation=True, return_tensors="pt"
                     ).input_ids
+                    example["input_ids2_without_cls"] = self.tokenizer[1](
+                        captions_copy, padding=True, truncation=True, return_tensors="pt"
+                    ).input_ids
                 else:
                     example["input_ids2"] = None
+                    example["input_ids2_without_cls"] = None
             else:
                 example["input_ids"] = torch.stack(input_ids_list)
+                example["input_ids_without_cls"] = torch.stack(input_ids_list_without_cls) if len(self.tokenizers) > 1 else None
                 example["input_ids2"] = torch.stack(input_ids2_list) if len(self.tokenizers) > 1 else None
+                example["input_ids2_without_cls"] = torch.stack(input_ids2_list_without_cls) if len(self.tokenizers) > 1 else None
             example["text_encoder_outputs1_list"] = None
             example["text_encoder_outputs2_list"] = None
             example["text_encoder_pool2_list"] = None
+            example["text_encoder_outputs1_without_cls_list"] = None
+            example["text_encoder_outputs2_without_cls_list"] = None
+            example["text_encoder_pool2_without_cls_list"] = None
         else:
             example["input_ids"] = None
             example["input_ids2"] = None
+            example["input_ids_without_cls"] = None
+            example["input_ids2_without_cls"] = None
             # # for assertion
             # example["input_ids"] = torch.stack([self.get_input_ids(cap, self.tokenizers[0]) for cap in captions])
             # example["input_ids2"] = torch.stack([self.get_input_ids(cap, self.tokenizers[1]) for cap in captions])
             example["text_encoder_outputs1_list"] = torch.stack(text_encoder_outputs1_list)
             example["text_encoder_outputs2_list"] = torch.stack(text_encoder_outputs2_list)
             example["text_encoder_pool2_list"] = torch.stack(text_encoder_pool2_list)
+            example["text_encoder_outputs1_without_cls_list"] = torch.stack(text_encoder_outputs1_without_cls_list)
+            example["text_encoder_outputs2_without_cls_list"] = torch.stack(text_encoder_outputs2_without_cls_list)
+            example["text_encoder_pool2_without_cls_list"] = torch.stack(text_encoder_pool2_without_cls_list)
 
         if images[0] is not None:
             images = torch.stack(images)
@@ -1358,6 +1424,8 @@ class BaseDataset(torch.utils.data.Dataset):
         images = []
         input_ids1_list = []
         input_ids2_list = []
+        input_ids1_without_cls_list = []
+        input_ids2_without_cls_list = []
         absolute_paths = []
         resized_sizes = []
         bucket_reso = None
@@ -1386,15 +1454,21 @@ class BaseDataset(torch.utils.data.Dataset):
 
             if self.caching_mode == "text":
                 input_ids1 = self.get_input_ids(caption, self.tokenizers[0])
+                input_ids1_without_cls = self.get_input_ids_without_cls(caption, self.tokenizers[0])
                 input_ids2 = self.get_input_ids(caption, self.tokenizers[1])
+                input_ids2_without_cls = self.get_input_ids_without_cls(caption, self.tokenizers[1])
             else:
                 input_ids1 = None
                 input_ids2 = None
+                input_ids1_without_cls = None
+                input_ids2_without_cls = None
 
             captions.append(caption)
             images.append(image)
             input_ids1_list.append(input_ids1)
             input_ids2_list.append(input_ids2)
+            input_ids1_without_cls_list.append(input_ids1_without_cls)
+            input_ids2_without_cls_list.append(input_ids2_without_cls)
             absolute_paths.append(image_info.absolute_path)
             resized_sizes.append(image_info.resized_size)
 
@@ -1407,6 +1481,8 @@ class BaseDataset(torch.utils.data.Dataset):
         example["captions"] = captions
         example["input_ids1_list"] = input_ids1_list
         example["input_ids2_list"] = input_ids2_list
+        example["input_ids_without_cls"] = input_ids1_without_cls_list
+        example["input_ids2_without_cls"] = input_ids2_without_cls_list
         example["absolute_paths"] = absolute_paths
         example["resized_sizes"] = resized_sizes
         example["flip_aug"] = flip_aug
@@ -1482,6 +1558,13 @@ class DreamBoothDataset(BaseDataset):
             return caption
 
         def load_dreambooth_dir(subset: DreamBoothSubset):
+            """
+            画像ファイルを読み込み、キャプションを読み込む
+            Load image files and read captions.
+            Returns:
+                img_paths: list of image paths / 画像ファイルパスのリスト
+                captions: list of captions / キャプションのリスト
+            """
             if not os.path.isdir(subset.image_dir):
                 print(f"not directory: {subset.image_dir}")
                 return [], []
@@ -1506,7 +1589,8 @@ class DreamBoothDataset(BaseDataset):
                         missing_captions.append(img_path)
                     else:
                         if subset.class_tokens is not None:
-                            cap_for_img = subset.class_tokens + ", " + cap_for_img
+                            # class tokenを追加する
+                            cap_for_img = subset.class_tokens.replace(',', ' ') + ", " + cap_for_img
                         captions.append(cap_for_img)
 
             self.set_tag_frequency(os.path.basename(subset.image_dir), captions)  # タグ頻度を記録
@@ -1559,7 +1643,7 @@ class DreamBoothDataset(BaseDataset):
                 print(f"mask_dir is set to {mask_dir} / mask_dirが設定されています: {mask_dir}")
             any_mask_found = False
             for img_path, caption in zip(img_paths, captions): # TODO : add mask path here, mask path is directory to use to search matching mask file
-                info = ImageInfo(img_path, subset.num_repeats, caption, subset.is_reg, img_path)
+                info = ImageInfo(img_path, subset.num_repeats, caption, subset.is_reg, img_path, class_tokens = subset.class_tokens)
                 if mask_dir:
                     mask_corresponding_path = search_mask(image_path=img_path, mask_dir=mask_dir)
                     info.mask_path = mask_corresponding_path
@@ -2127,7 +2211,7 @@ def debug_dataset(train_dataset, show_input_ids=False):
             example = train_dataset[idx]
             if example["latents"] is not None:
                 print(f"sample has latents from npz file: {example['latents'].size()}")
-            for j, (ik, cap, lw, iid, orgsz, crptl, trgsz, flpdz) in enumerate(
+            for j, (ik, cap, lw, iid, orgsz, crptl, trgsz, flpdz, iid_wcls) in enumerate(
                 zip(
                     example["image_keys"],
                     example["captions"],
@@ -2137,6 +2221,7 @@ def debug_dataset(train_dataset, show_input_ids=False):
                     example["crop_top_lefts"],
                     example["target_sizes_hw"],
                     example["flippeds"],
+                    example["input_ids_without_cls"],
                 )
             ):
                 print(
@@ -2147,6 +2232,9 @@ def debug_dataset(train_dataset, show_input_ids=False):
                     print(f"input ids: {iid}")
                     if "input_ids2" in example:
                         print(f"input ids2: {example['input_ids2'][j]}")
+                    print(f"input ids without cls: {iid_wcls}")
+                    if "input_ids2_without_cls" in example:
+                        print(f"input ids without cls2: {example['input_ids2_without_cls'][j]}")
                 if example["images"] is not None:
                     im = example["images"][j]
                     print(f"image size: {im.size()}")
@@ -2392,10 +2480,13 @@ def cache_batch_latents(
 
 
 def cache_batch_text_encoder_outputs(
-    image_infos, tokenizers, text_encoders, max_token_length, cache_to_disk, input_ids1, input_ids2, dtype
+    image_infos, tokenizers, text_encoders, max_token_length, cache_to_disk, input_ids1, input_ids2, dtype,
+    ids_without_cls1=None, ids_without_cls2=None
 ):
     input_ids1 = input_ids1.to(text_encoders[0].device)
     input_ids2 = input_ids2.to(text_encoders[1].device)
+    ids_without_cls1 = ids_without_cls1.to(text_encoders[0].device) if ids_without_cls1 is not None else None
+    ids_without_cls2 = ids_without_cls2.to(text_encoders[1].device) if ids_without_cls2 is not None else None
 
     with torch.no_grad():
         b_hidden_state1, b_hidden_state2, b_pool2 = get_hidden_states_sdxl(
@@ -2406,29 +2497,50 @@ def cache_batch_text_encoder_outputs(
             tokenizers[1],
             text_encoders[0],
             text_encoders[1],
-            dtype,
+            dtype
+        )
+        b_hidden_state1_without_cls, b_hidden_state2_without_cls, b_pool2_without_cls = get_hidden_states_sdxl(
+            max_token_length,
+            ids_without_cls1,
+            ids_without_cls2,
+            tokenizers[0],
+            tokenizers[1],
+            text_encoders[0],
+            text_encoders[1],
+            dtype
         )
 
         # ここでcpuに移動しておかないと、上書きされてしまう
         b_hidden_state1 = b_hidden_state1.detach().to("cpu")  # b,n*75+2,768
         b_hidden_state2 = b_hidden_state2.detach().to("cpu")  # b,n*75+2,1280
+        b_hidden_state1_without_cls = b_hidden_state1_without_cls.detach().to("cpu")  # b,n*75,768
+        b_hidden_state2_without_cls = b_hidden_state2_without_cls.detach().to("cpu")  # b,n*75,1280
         b_pool2 = b_pool2.detach().to("cpu")  # b,1280
+        b_pool2_without_cls = b_pool2_without_cls.detach().to("cpu")  # b,1280
 
-    for info, hidden_state1, hidden_state2, pool2 in zip(image_infos, b_hidden_state1, b_hidden_state2, b_pool2):
+    for info, hidden_state1, hidden_state2, pool2, hidden_state1_without_cls1, hidden_state1_without_cls2, pool2_without_cls in \
+        zip(image_infos, b_hidden_state1, b_hidden_state2, b_pool2, b_hidden_state1_without_cls, b_hidden_state2_without_cls, b_pool2_without_cls):
         if cache_to_disk:
-            save_text_encoder_outputs_to_disk(info.text_encoder_outputs_npz, hidden_state1, hidden_state2, pool2)
+            save_text_encoder_outputs_to_disk(info.text_encoder_outputs_npz, hidden_state1, hidden_state2, pool2,
+                                              hidden_state1_without_cls1, hidden_state1_without_cls2, pool2_without_cls)
         else:
             info.text_encoder_outputs1 = hidden_state1
             info.text_encoder_outputs2 = hidden_state2
             info.text_encoder_pool2 = pool2
+            info.text_encoder_outputs1_without_cls = hidden_state1_without_cls1
+            info.text_encoder_outputs2_without_cls = hidden_state1_without_cls2
+            info.text_encoder_pool2_without_cls = pool2_without_cls
 
 
-def save_text_encoder_outputs_to_disk(npz_path, hidden_state1, hidden_state2, pool2):
+def save_text_encoder_outputs_to_disk(npz_path, hidden_state1, hidden_state2, pool2, hidden_state1_without_cls, hidden_state2_without_cls, pool2_without_cls):
     np.savez(
         npz_path,
         hidden_state1=hidden_state1.cpu().float().numpy(),
         hidden_state2=hidden_state2.cpu().float().numpy(),
         pool2=pool2.cpu().float().numpy(),
+        hidden_state1_without_cls=hidden_state1_without_cls.cpu().float().numpy(),
+        hidden_state2_without_cls=hidden_state2_without_cls.cpu().float().numpy(),
+        pool2_without_cls=pool2_without_cls.cpu().float().numpy(),
     )
 
 
@@ -2437,7 +2549,10 @@ def load_text_encoder_outputs_from_disk(npz_path):
         hidden_state1 = torch.from_numpy(f["hidden_state1"])
         hidden_state2 = torch.from_numpy(f["hidden_state2"]) if "hidden_state2" in f else None
         pool2 = torch.from_numpy(f["pool2"]) if "pool2" in f else None
-    return hidden_state1, hidden_state2, pool2
+        hidden_state1_without_cls = torch.from_numpy(f["hidden_state1_without_cls"]) if "hidden_state1_without_cls" in f else None
+        hidden_state2_without_cls = torch.from_numpy(f["hidden_state2_without_cls"]) if "hidden_state2_without_cls" in f else None
+        pool2_without_cls = torch.from_numpy(f["pool2_without_cls"]) if "pool2_without_cls" in f else None
+    return hidden_state1, hidden_state2, pool2, hidden_state1_without_cls, hidden_state2_without_cls, pool2_without_cls
 
 
 # endregion
