@@ -565,6 +565,11 @@ if __name__ == '__main__':
         images_folders.update(get_dataset_folders(tuning_config))
         commands = []
         for images_folder in images_folders:
+            if images_folder == '':
+                continue
+            if not os.path.exists(images_folder):
+                print(f"Images folder {images_folder} does not exist, skipping...")
+                continue
             commands.append(tagger_command + [images_folder])
         for _i, command in enumerate(commands):
             print(f"Tagger command : {command}, {_i}/{len(commands)}")
