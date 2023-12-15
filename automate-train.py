@@ -58,10 +58,15 @@ r'''[wandb]
         with open(template_path_to_read, 'r', encoding='utf-8') as f:
             template = f.read()
     merged_string = f"{project_name}_"+"_".join([f"{key}={value}" for key, value in dict_args.items() if key not in args_to_remove]) + "_" + generate_random_string()
-    new_template = template.format(
-        merged_string,
-        entity=entity_name
-    )
+    if "entity" in template:
+        new_template = template.format(
+            merged_string,
+            entity=entity_name
+        )
+    else:
+        new_template = template.format(
+            merged_string,
+        )
     # if entity_name is None or "", remove entity line
     if entity_name == "" or entity_name is None:
         new_template_fixed = ""
