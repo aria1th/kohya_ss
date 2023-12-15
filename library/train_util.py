@@ -800,7 +800,7 @@ class BaseDataset(torch.utils.data.Dataset):
         if class_tokens is None:
             input_ids_without_class_tokens = input_ids.clone()
         else:
-            pre_caption = caption.replace(class_tokens, "").strip()
+            pre_caption = caption.replace(class_tokens or "", "").strip()
             input_ids_without_class_tokens = tokenizer(
                 pre_caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
             ).input_ids
@@ -1360,7 +1360,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 captions_copy = captions.copy()
                 # using cls_tokens_list to remove cls tokens from each caption
                 for i, caption in enumerate(captions_copy):
-                    captions_copy[i] = caption.replace(cls_tokens_list[i], "")
+                    captions_copy[i] = caption.replace(cls_tokens_list[i] or "", "")
                 example["input_ids"] = self.tokenizer[0](captions, padding=True, truncation=True, return_tensors="pt").input_ids
                 example["input_ids_without_cls"] = self.tokenizer[0](
                     captions_copy, padding=True, truncation=True, return_tensors="pt"
@@ -1412,7 +1412,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
         example["captions"] = captions
-        example["captions_without_cls"] = [cap.replace(cls_tokens, "") for cap, cls_tokens in zip(captions, cls_tokens_list)]
+        example["captions_without_cls"] = [cap.replace(cls_tokens or "", "") for cap, cls_tokens in zip(captions, cls_tokens_list)]
 
         example["original_sizes_hw"] = torch.stack([torch.LongTensor(x) for x in original_sizes_hw])
         example["crop_top_lefts"] = torch.stack([torch.LongTensor(x) for x in crop_top_lefts])
