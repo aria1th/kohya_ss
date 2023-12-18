@@ -54,7 +54,7 @@ def format_train_config(character_name:str, output_dir:str, prompt_dir:str, pret
     return f"temp/train_config_{character_name}.toml"
 
 is_running = False
-def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pretrained_model:str, devices:str="0"):
+def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pretrained_model:str, devices:str="0", webui_auth:str=""):
     """
     Trains a model with the given parameters
     """
@@ -64,7 +64,7 @@ def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pre
     dataset_config = format_dataset_config(path, character_name)
     train_config = format_train_config(character_name, output_dir, prompt_dir, pretrained_model)
     is_running = True
-    os.system(f"export CUDA_VISIBLE_DEVICES={devices} && python train_network.py --dataset_config {dataset_config} --config_file {train_config}")
+    os.system(f"export CUDA_VISIBLE_DEVICES={devices} && python train_network.py --dataset_config {dataset_config} --config_file {train_config} --webui_auth {webui_auth}")
     is_running = False
 
 import gradio as gr
@@ -77,11 +77,12 @@ with gr.Blocks(analytics_enabled=False) as training_interface:
         prompt_dir = gr.Textbox(lines=1, label="Prompt Directory", value="examples/iom.txt")
         pretrained_model = gr.Textbox(lines=1, label="Pretrained Model_path", value="models/animefull-all.ckpt")
         cuda_device_num = gr.Textbox(lines=1, label="Cuda Device Number", value="0")
+        webui_auth = gr.Textbox(lines=1, label="WebUI Auth", value="")
 
         train_button = gr.Button(label="Train")
         train_button.click(
             train_auto,
-            inputs=[character_name, path, output_dir, prompt_dir, pretrained_model, cuda_device_num],
+            inputs=[character_name, path, output_dir, prompt_dir, pretrained_model, cuda_device_num, webui_auth],
         )
 if __name__ == "__main__":
     training_interface.launch(share=True)
