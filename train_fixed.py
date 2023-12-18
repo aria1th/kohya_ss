@@ -54,7 +54,7 @@ def format_train_config(character_name:str, output_dir:str, prompt_dir:str, pret
     return f"temp/train_config_{character_name}.toml"
 
 is_running = False
-def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pretrained_model:str, devices:str="0", webui_auth:str=""):
+def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pretrained_model:str, devices:str="0"):
     """
     Trains a model with the given parameters
     """
@@ -64,11 +64,13 @@ def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pre
     dataset_config = format_dataset_config(path, character_name)
     train_config = format_train_config(character_name, output_dir, prompt_dir, pretrained_model)
     is_running = True
-    os.system(f"export CUDA_VISIBLE_DEVICES={devices} && python train_network.py --dataset_config {dataset_config} --config_file {train_config} --webui_auth {webui_auth}")
-    is_running = False
+    try:
+        os.system(f"export CUDA_VISIBLE_DEVICES={devices} && python train_network.py --dataset_config {dataset_config} --config_file {train_config}")
+    finally:
+        is_running = False
 
 import gradio as gr
-
+import argparse
 with gr.Blocks(analytics_enabled=False) as training_interface:
     with gr.Tab("path-base"):
         character_name = gr.Textbox(lines=1, label="Character Name", value="iom")
@@ -77,12 +79,23 @@ with gr.Blocks(analytics_enabled=False) as training_interface:
         prompt_dir = gr.Textbox(lines=1, label="Prompt Directory", value="examples/iom.txt")
         pretrained_model = gr.Textbox(lines=1, label="Pretrained Model_path", value="models/animefull-all.ckpt")
         cuda_device_num = gr.Textbox(lines=1, label="Cuda Device Number", value="0")
-        webui_auth = gr.Textbox(lines=1, label="WebUI Auth", value="")
 
         train_button = gr.Button(label="Train")
         train_button.click(
             train_auto,
-            inputs=[character_name, path, output_dir, prompt_dir, pretrained_model, cuda_device_num, webui_auth],
+            inputs=[character_name, path, output_dir, prompt_dir, pretrained_model, cuda_device_num],
         )
 if __name__ == "__main__":
-    training_interface.launch(share=True)
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--character_name", type=str, default="iom")
+    argparser.add_argument("--path", type=str, default="dataset/iom")
+    argparser.add_argument("--output_dir", type=str, default="outputs/iom")
+    argparser.add_argument("--prompt_dir", type=str, default="examples/iom.txt")
+    argparser.add_argument("--pretrained_model", type=str, default="models/animefull-all.ckpt")
+    argparser.add_argument("--cuda_device_num", type=str, default="0")
+    argparser.add_argument("--gradio", action="store_true")
+    args = argparser.parse_args()
+    if args.gradio:
+        training_interface.launch(share=True)
+    else:
+        train_auto(args.character_name, args.path, args.output_dir, args.prompt_dir, args.pretrained_model, args.cuda_device_num)
