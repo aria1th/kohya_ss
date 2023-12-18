@@ -64,7 +64,7 @@ def train_auto(character_name:str, path:str, output_dir:str, prompt_dir:str, pre
     dataset_config = format_dataset_config(path, character_name)
     train_config = format_train_config(character_name, output_dir, prompt_dir, pretrained_model)
     is_running = True
-    os.system(f"export CUDA_VISIBLE_DEVICES={devices} python train_network.py --dataset_config {dataset_config} --config_file {train_config}")
+    os.system(f"export CUDA_VISIBLE_DEVICES={devices} && python train_network.py --dataset_config {dataset_config} --config_file {train_config}")
     is_running = False
 
 import gradio as gr
