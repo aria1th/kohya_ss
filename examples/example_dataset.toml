@@ -1,0 +1,18 @@
+[[datasets]]
+
+[[datasets.subsets]]
+    num_repeats = {repeats}
+    image_dir = "{path}"
+    class_tokens = "{cls_token}"
+
+[general]
+    resolution = 768
+    shuffle_caption = true
+    keep_tokens = 1
+    flip_aug = false
+    caption_extension = ".txt"
+    enable_bucket = true
+    bucket_reso_steps = 64
+    bucket_no_upscale = false
+    min_bucket_reso = 320
+    max_bucket_reso = 1280

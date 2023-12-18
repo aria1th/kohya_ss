@@ -1,0 +1,79 @@
+[additional_network_arguments]
+unet_lr = 0.00025
+text_encoder_lr = 5e-5
+network_dim = 64
+network_alpha = 8
+network_module = "networks.lora"
+network_args = [ "down_lr_weight=1,1,1,1,1,1,1,1,1,1,1,1", "up_lr_weight=1,1,1,1,1,1,1,1,1,1,1,1", "mid_lr_weight=1",]
+
+[optimizer_arguments]
+learning_rate = 0.00025
+lr_scheduler = "cosine_with_restarts"
+lr_scheduler_num_cycles = 3
+lr_warmup_steps = 180
+optimizer_type = "AdamW8bit"
+optimizer_args = [ "betas=[0.9, 0.999]", "weight_decay=0.01", "eps=1e-08",]
+
+[training_arguments]
+max_train_epochs = 5
+save_every_n_epochs = 1
+save_last_n_epochs = 5
+train_batch_size = 2
+clip_skip = 2
+min_snr_gamma = 5.0
+weighted_captions = true
+seed = 42
+max_token_length = 225
+xformers = "False"
+lowram = false
+max_data_loader_n_workers = 8
+persistent_data_loader_workers = true
+save_precision = "bf16"
+mixed_precision = "bf16"
+output_dir = "{output_dir}/output"
+logging_dir = "{output_dir}/_logs"
+output_name = "{character}"
+log_prefix = "{character}_autotrain"
+save_state = false
+sample_every_n_epochs = 1
+sample_prompts = "{prompts}"
+max_grad_norm = 0.0
+
+[model_arguments]
+pretrained_model_name_or_path = "{pretrained_model}"
+
+[saving_arguments]
+save_model_as = "safetensors"
+
+[dreambooth_arguments]
+prior_loss_weight = 1.0
+
+[dataset_arguments]
+cache_latents = true
+
+[extra_arguments]
+use_external_webui = true
+webui_url = "http://127.0.0.1:9050/"
+webui_auth = ""
+should_wait_webui_process = false
+enable_hypertile = false
+contrastive_class_learning = false
+contrastive_class_learning_weight = 1.0
+ip_noise_gamma = 0.0
+face_crop_aug_range = "1.0,1.0"
+flip_aug = false
+color_aug = false
+random_crop = false
+gor_num_groups = 32
+gor_regularization_type = "inter"
+gor_name_to_regularize = "up_blocks.*_lora\\.up"
+gor_regularize_fc_layers = true
+gor_ortho_decay = 0.99
+gor_regularization = false
+zero_terminal_snr = false
+v2 = false
+v_parameterization = false
+mask_loss = false
+mask_dir = ""
+mask_threshold = 1.0
+process_title = "{character}_train"
