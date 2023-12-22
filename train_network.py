@@ -11,6 +11,7 @@ from multiprocessing import Value
 import toml
 from library.hypertile import split_attention, flush
 from library.hypertile import set_seed as hypertile_set_seed
+from networks.lora import LoRANetwork
 
 from tqdm import tqdm
 import torch
@@ -137,9 +138,14 @@ class NetworkTrainer:
             t_enc.to(accelerator.device)
 
     def get_text_cond(self, args, accelerator, batch, tokenizers, text_encoders, weight_dtype):
+        if "input_ids_without_cls" in batch:
+            input_ids_b = batch["input_ids_without_cls"].to(accelerator.device)
+            encoder_hidden_states_b = train_util.get_hidden_states(args, input_ids_b, tokenizers[0], text_encoders[0], weight_dtype)
+        else:
+            encoder_hidden_states_b = None
         input_ids = batch["input_ids"].to(accelerator.device)
         encoder_hidden_states = train_util.get_hidden_states(args, input_ids, tokenizers[0], text_encoders[0], weight_dtype)
-        return encoder_hidden_states
+        return encoder_hidden_states, encoder_hidden_states_b
 
     def call_unet(self, args, accelerator, unet, noisy_latents, timesteps, text_conds, batch, weight_dtype):
         noise_pred = unet(noisy_latents, timesteps, text_conds).sample
@@ -318,7 +324,7 @@ class NetworkTrainer:
                 # workaround for LyCORIS (;^ω^)
                 net_kwargs["dropout"] = args.network_dropout
 
-            network = network_module.create_network(
+            network:LoRANetwork = network_module.create_network(
                 1.0,
                 args.network_dim,
                 args.network_alpha,
@@ -839,8 +845,19 @@ class NetworkTrainer:
                                 args.max_token_length // 75 if args.max_token_length else 1,
                                 clip_skip=args.clip_skip,
                             )
+                            if args.contrastive_class_learning:
+                                text_encoder_conds_b = get_weighted_text_embeddings(
+                                    tokenizer,
+                                    text_encoder,
+                                    batch["captions_without_cls"],
+                                    accelerator.device,
+                                    args.max_token_length // 75 if args.max_token_length else 1,
+                                    clip_skip=args.clip_skip,
+                                )
+                            else:
+                                text_encoder_conds_b = None
                         else:
-                            text_encoder_conds = self.get_text_cond(
+                            text_encoder_conds, text_encoder_conds_b = self.get_text_cond(
                                 args, accelerator, batch, tokenizers, text_encoders, weight_dtype
                             )
 
@@ -860,6 +877,20 @@ class NetworkTrainer:
                             noise_pred = self.call_unet(
                                 args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
                             )
+                            if args.contrastive_class_learning:
+                                # call without lora
+                                prev_multiplier = network.multiplier
+                                network.set_multiplier(0.0)
+                                noise_pred_vanilla = self.call_unet(
+                                    args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
+                                )
+                                network.set_multiplier(prev_multiplier)
+                                noise_pred_with_lora = self.call_unet(
+                                    args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
+                                )
+                            else:
+                                noise_pred_vanilla = None
+                                noise_pred_with_lora = None
 
                     if args.v_parameterization:
                         # v-parameterization training
@@ -896,6 +927,14 @@ class NetworkTrainer:
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
                     loss = loss.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
+                    
+                    if args.contrastive_class_learning:
+                        # contrastive class learning
+                        loss_vanilla = torch.nn.functional.mse_loss(noise_pred_vanilla.float(), noise_pred_with_lora.float(), reduction="none")
+                        loss_vanilla = loss_vanilla.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
+                        loss = loss + loss_vanilla * args.contrastive_class_learning_weight
+                    else:
+                        loss_vanilla = None
 
                     loss_weights = batch["loss_weights"]  # 各sampleごとのweight
                     loss = loss * loss_weights
@@ -964,6 +1003,8 @@ class NetworkTrainer:
                     logs = self.generate_step_logs(args, current_loss, avr_loss, lr_scheduler, keys_scaled, mean_norm, maximum_norm)
                     if loss_residual is not None:
                         logs["loss/residual"] = loss_residual.mean().item()
+                    if loss_vanilla is not None:
+                        logs["loss/vanilla"] = loss_vanilla.mean().item()
                     accelerator.log(logs, step=global_step)
 
                 if global_step >= args.max_train_steps:
@@ -1035,6 +1076,9 @@ def add_mask_args(parser: argparse.ArgumentParser)-> None:
     parser.add_argument("--mask_threshold", type=float, default=1, help="threshold for mask, all values upper than this will be converted to 1, useful for gaussian mask")
     parser.add_argument("--mask_path", type=str, default=None, help="Directory that contains masks corresponding to the images in the dataset. The mask images should follow <name>_something_mask.fileext.")
 
+def add_contrastive_class_learning_args(parser: argparse.ArgumentParser)-> None:
+    parser.add_argument("--contrastive_class_learning", type=bool, default=False, help="whether to enable contrastive class learning")
+    parser.add_argument("--contrastive_class_learning_weight", type=float, default=1.0, help="weight for contrastive class learning loss")
 def setup_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
@@ -1125,7 +1169,7 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     add_gor_args(parser)
     add_mask_args(parser)
-
+    add_contrastive_class_learning_args(parser)
     return parser
 
 
@@ -1133,6 +1177,8 @@ if __name__ == "__main__":
     parser = setup_parser()
 
     args = parser.parse_args()
+    # debug
+    print(f" Train with contrastive learning : {args.contrastive_class_learning}")
     args = train_util.read_config_from_file(args, parser)
     trainer = NetworkTrainer()
     trainer.train(args)

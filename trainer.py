@@ -436,7 +436,10 @@ def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
   parser.add_argument('--sdxl', type=bool, default=False, help='is model type SDXL for the project (default: False)')
   # enable_hypertile
   parser.add_argument('--enable_hypertile', type=bool, default=False, help='Enable hypertile for the project (default: False)')
-  return ['enable_hypertile']
+  # contrastive_class_learning, contrastive_class_learning_weight
+  parser.add_argument('--contrastive_class_learning', type=str, default='False', help='Contrastive class learning for the project (default: False)')
+  parser.add_argument('--contrastive_class_learning_weight', type=float, default=1.0, help='Contrastive class learning weight for the project (default: 1.0)')
+  return ['enable_hypertile', 'contrastive_class_learning', 'contrastive_class_learning_weight']
 
 def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
   """
