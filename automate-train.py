@@ -543,6 +543,8 @@ if __name__ == '__main__':
     # python automate-train.py --project_name_base BASE --default_config_path default_config.json --tuning_config_path tuning_config.json 
     # --train_id_start 0 --images_folder '' --model_file '' --port '' --cuda_device ''
     parser.add_argument('--autotag', action='store_true', default=False, help="If true, it will tag the datasets used for training, will override the default tag")
+    # autotag-only
+    parser.add_argument('--autotag-only', action='store_true', default=False, help="If true, it will only autotag the datasets used for training, then exit")
     parser.add_argument('--tagger_config_path', type=str, default='tagger_config.json', help="tagger config path")
     args = parser.parse_args()
     tagger_config_args = get_tagger_config(args.tagger_config_path)
@@ -554,7 +556,7 @@ if __name__ == '__main__':
             accelerate_path = 'accelerate'
     else:
         accelerate_path = 'accelerate'
-    if args.autotag:
+    if args.autotag or args.autotag_only:
         print("Autotagging datasets...")
         # use num_processes 1 to avoid deadlock
         # accelerate launch './finetune/tag_images_by_wd14_tagger.py' --batch_size=8 --general_threshold=0.35 --character_threshold=0.35 --caption_extension=".txt" --model="SmilingWolf/wd-v1-4-moat-tagger-v2" --max_data_loader_n_workers=2 --recursive --debug --remove_underscore --frequency_tags --onnx --append_tags --force_download --undesired_tags="['nsfw']" "./train"
@@ -587,6 +589,9 @@ if __name__ == '__main__':
             print(f"Tagger command : {command}, {_i}/{len(commands)}")
             print(command)
             subprocess.run(command, shell=True,check=True)
+        if args.autotag_only:
+            print("Autotagging finished, exiting...")
+            exit(0)
 
     device_queue = queue.Queue()
     
