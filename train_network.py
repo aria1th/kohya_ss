@@ -857,9 +857,13 @@ class NetworkTrainer:
                             else:
                                 text_encoder_conds_b = None
                         else:
-                            text_encoder_conds, text_encoder_conds_b = self.get_text_cond(
+                            cond = self.get_text_cond(
                                 args, accelerator, batch, tokenizers, text_encoders, weight_dtype
                             )
+                            if len(cond) == 2:
+                                text_encoder_conds, text_encoder_conds_b = cond
+                            else:
+                                text_encoder_conds = cond
 
                     # Sample noise, sample a random timestep for each image, and add noise to the latents,
                     # with noise offset and/or multires noise if specified
@@ -884,6 +888,7 @@ class NetworkTrainer:
                                 noise_pred_vanilla = self.call_unet(
                                     args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
                                 )
+                                noise_pred_vanilla.requires_grad_(False) # only for loss calculation
                                 network.set_multiplier(prev_multiplier)
                                 noise_pred_with_lora = self.call_unet(
                                     args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
