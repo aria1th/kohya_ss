@@ -846,23 +846,9 @@ def train_model(
             log.info(
                 "\033[1;31mError:\033[0m The required module 'lycoris_lora' is not installed. Please install by running \033[33mupgrade.ps1\033[0m before running this program."
             )
-            return
-        run_cmd += f" --network_module=lycoris.kohya"
-        run_cmd += f' --network_args "preset={LyCORIS_preset}" "conv_dim={conv_dim}" "conv_alpha={conv_alpha}" "rank_dropout={rank_dropout}" "module_dropout={module_dropout}" "factor={factor}" "use_cp={use_cp}" "use_scalar={use_scalar}" "decompose_both={decompose_both}" "rank_dropout_scale={rank_dropout_scale}" "algo=lokr" "train_norm={train_norm}"'
-        # This is a hack to fix a train_network LoHA logic issue
-        if not network_dropout > 0.0:
-            run_cmd += f' --network_dropout="{network_dropout}"'
-
-    if LoRA_type == "LyCORIS/Native Fine-Tuning":
-        try:
-            import lycoris
-        except ModuleNotFoundError:
-            log.info(
-                "\033[1;31mError:\033[0m The required module 'lycoris_lora' is not installed. Please install by running \033[33mupgrade.ps1\033[0m before running this program."
-            )
-            return
-        run_cmd += f" --network_module=lycoris.kohya"
-        run_cmd += f' --network_args "preset={LyCORIS_preset}" "rank_dropout={rank_dropout}" "module_dropout={module_dropout}" "use_tucker={use_tucker}" "use_scalar={use_scalar}" "rank_dropout_scale={rank_dropout_scale}" "algo=full" "train_norm={train_norm}"'
+            return "Error: lycoris_lora not installed but LoKr selected"
+        run_cmd += f' --network_module=lycoris.kohya'
+        run_cmd += f' --network_args "conv_dim={conv_dim}" "conv_alpha={conv_alpha}" "factor={factor}" "use_cp={use_cp}" "algo=lokr"'
         # This is a hack to fix a train_network LoHA logic issue
         if not network_dropout > 0.0:
             run_cmd += f' --network_dropout="{network_dropout}"'
