@@ -65,6 +65,8 @@ class BaseSubsetParams:
   caption_tag_dropout_rate: float = 0.0
   token_warmup_min: int = 1
   token_warmup_step: float = 0
+  mask_dir: Optional[str] = None
+  shift_images_dir: Optional[str] = None
 
 @dataclass
 class DreamBoothSubsetParams(BaseSubsetParams):
@@ -164,6 +166,8 @@ class ConfigSanitizer:
     "keep_tokens_separator": str,
     "token_warmup_min": int,
     "token_warmup_step": Any(float,int),
+    "mask_dir": str,
+    "shift_images_dir": str,
     "caption_prefix": str,
     "caption_suffix": str,
   }
@@ -475,6 +479,8 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           random_crop: {subset.random_crop}
           token_warmup_min: {subset.token_warmup_min},
           token_warmup_step: {subset.token_warmup_step},
+          mask_dir: {subset.mask_dir},
+          shift_images_dir: {subset.shift_images_dir},
       """), "  ")
 
       if is_dreambooth:
@@ -501,7 +507,9 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
   return DatasetGroup(datasets)
 
 
-def generate_dreambooth_subsets_config_by_subdirs(train_data_dir: Optional[str] = None, reg_data_dir: Optional[str] = None):
+def generate_dreambooth_subsets_config_by_subdirs(train_data_dir: Optional[str] = None, reg_data_dir: Optional[str] = None,
+                                                  mask_dir: Optional[str] = None,
+                                                  shift_images_dir: Optional[str] = None):
   def extract_dreambooth_params(name: str) -> Tuple[int, str]:
     tokens = name.split('_')
     try:
@@ -512,7 +520,7 @@ def generate_dreambooth_subsets_config_by_subdirs(train_data_dir: Optional[str] 
     caption_by_folder = '_'.join(tokens[1:])
     return n_repeats, caption_by_folder
 
-  def generate(base_dir: Optional[str], is_reg: bool):
+  def generate(base_dir: Optional[str], is_reg: bool, mask_dir: Optional[str] = None, shift_images_dir: Optional[str] = None):
     if base_dir is None:
       return []
 
@@ -530,13 +538,17 @@ def generate_dreambooth_subsets_config_by_subdirs(train_data_dir: Optional[str] 
         continue
 
       subset_config = {"image_dir": str(subdir), "num_repeats": num_repeats, "is_reg": is_reg, "class_tokens": class_tokens}
+      if mask_dir is not None:
+        subset_config["mask_dir"] = mask_dir
+      if shift_images_dir is not None:
+        subset_config["shift_images_dir"] = shift_images_dir
       subsets_config.append(subset_config)
 
     return subsets_config
 
   subsets_config = []
-  subsets_config += generate(train_data_dir, False)
-  subsets_config += generate(reg_data_dir, True)
+  subsets_config += generate(train_data_dir, False, mask_dir=mask_dir, shift_images_dir=shift_images_dir)
+  subsets_config += generate(reg_data_dir, True, mask_dir=mask_dir, shift_images_dir=shift_images_dir)
 
   return subsets_config
 

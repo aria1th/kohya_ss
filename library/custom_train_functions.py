@@ -2,8 +2,9 @@ import torch
 import argparse
 import random
 import re
-from typing import List, Optional, Union
-
+from typing import List, Optional, Union, Tuple
+from .group_orthogonalization_normalization import calc_group_reg_loss_lora, calc_group_reg_loss_lora_pre_calculated
+from torch.nn import functional as F
 
 def prepare_scheduler_for_custom_training(noise_scheduler, device):
     if hasattr(noise_scheduler, "all_snr"):
@@ -66,6 +67,34 @@ def apply_snr_weight(loss, timesteps, noise_scheduler, gamma, v_prediction=False
         snr_weight = torch.div(min_snr_gamma, snr).float().to(loss.device)
     loss = loss * snr_weight
     return loss
+
+def apply_gor_loss(loss, lora_modules:List[torch.nn.Module], num_groups:int, regularization_type:str, 
+                   name_to_regularize:str, regularize_fc_layers:bool = True, ortho_decay:float = 1e-6):
+    """
+    Calculate the the group regularization loss.
+    ### Author : YoavKrutz@Github
+    ### reference https://github.com/YoavKurtz/GOR/blob/master/weight_regularization.py
+    ### arxiv : https://arxiv.org/abs/2306.10001
+    """
+    if lora_modules is None:
+        return loss
+    reg_loss = calc_group_reg_loss_lora(
+        lora_modules, num_groups=num_groups, reg_type=regularization_type, names_to_reg=name_to_regularize,
+        regularize_fc_layers=regularize_fc_layers
+    )
+    return loss + ortho_decay * reg_loss
+
+def apply_gor_loss_precalculated(loss, lora_modules:List[torch.nn.Module], num_groups:int, regularization_type:str,
+                                    ortho_decay:float = 1e-6):
+    """
+    Calculate the the group regularization loss.
+    ### Author : YoavKrutz@Github, optimized by AngelBottomless@Github
+    """
+    reg_loss = calc_group_reg_loss_lora_pre_calculated(
+        lora_modules, num_groups=num_groups, reg_type=regularization_type
+    )
+    return loss + ortho_decay * reg_loss
+
 
 
 def scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler):
@@ -470,6 +499,41 @@ def apply_noise_offset(latents, noise, noise_offset, adaptive_noise_scale):
     noise = noise + noise_offset * torch.randn((latents.shape[0], latents.shape[1], 1, 1), device=latents.device)
     return noise
 
+def apply_mask_loss(noise_pred:torch.Tensor, target:torch.Tensor, batch, mask_loss_weight:float=1, mask_threshold:float=1) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply mask to noise_pred and target.
+    
+    @param noise_pred: noise prediction tensor
+    @param target: target tensor
+    @param batch: batch data
+    @param mask_loss_weight: mask loss weight, 0 means no mask loss
+    @param mask_threshold: mask threshold, all values upper than threshold are set to 1
+    
+    @return: noise_pred, target
+    """
+    mask_imgs = []
+    for images in batch['mask']:
+        if images is None:
+            mask_imgs.append(torch.ones(noise_pred.size()[-2:], device=noise_pred.device))
+        else:
+            # from numpy to Tensor
+            images = torch.from_numpy(images).to(noise_pred.device)
+            mask_imgs.append(images.unsqueeze(0).unsqueeze(0))
+    # interpolate
+    mask_imgs = [F.interpolate(mask_img, noise_pred.size()[-2:], mode='bilinear') for mask_img in mask_imgs]
+    
+    if mask_threshold < 1:
+        # thresholding, all values upper than threshold are set to 1
+        mask_imgs = [torch.where(mask_img > mask_threshold, torch.ones_like(mask_img, device=noise_pred.device), mask_img) for mask_img in mask_imgs]
+    # to Tensor
+    mask_imgs = torch.cat(mask_imgs, dim=0) # [batch_size, 1, 256, 256]
+    #print("mask_imgs size: ", mask_imgs[0].size()) # debug
+    # multiply mask to noise_pred and target
+    # element-wise multiplication
+    #noise_pred = noise_pred * (mask_imgs * mask_loss_weight) + (1 - mask_loss_weight) * noise_pred
+    noise_pred = noise_pred * (mask_imgs * mask_loss_weight + 1 - mask_loss_weight)
+    target = target * (mask_imgs * mask_loss_weight + 1 - mask_loss_weight)
+    return noise_pred, target
 
 """
 ##########################################

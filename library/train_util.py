@@ -19,6 +19,7 @@ from typing import (
     Tuple,
     Union,
 )
+from functools import cache
 from accelerate import Accelerator, InitProcessGroupKwargs, DistributedDataParallelKwargs
 import gc
 import glob
@@ -64,6 +65,8 @@ from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipel
 import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
+
+from library.webui_utils import wrap_sample_images_external_webui, check_webui_state
 
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
@@ -122,14 +125,34 @@ IMAGE_TRANSFORMS = transforms.Compose(
 
 TEXT_ENCODER_OUTPUTS_CACHE_SUFFIX = "_te_outputs.npz"
 
+def search_mask(image_path:str, mask_dir:str) -> Optional[str]:
+    """
+    Search mask file for the image.
+    image path is full path to image. (/data/.../image.jpg or .png or some extensions)
+    in mask_dir, we will find <filename>_<something>_mask.<allowed_extensions>
+    it matches a_mask.png, a_something_mask.png, a_some_long_string_mask.png, etc.
+    If multiple files are matched, it will return the first one.
+    
+    Supported extensions : png, jpg, jpen, webp and its capital letters.
+    """
+    parent, neat_path = os.path.split(image_path)
+    name_without_ext = os.path.splitext(neat_path)[0] #re.compile(f"{name}(_[^_]+)?_mask\.(png|jpg)$")
+    mask_re = re.compile(f"{name_without_ext}(_[^_]+)?_mask\.(png|jpg|jpeg|webp|PNG|JPG|JPEG|WEBP)$") # mask file name pattern
+    mask_path = None
+    for mask_file in os.listdir(mask_dir):
+        if mask_re.match(mask_file):
+            mask_path = os.path.join(mask_dir, mask_file)
+            break
+    return mask_path
 
 class ImageInfo:
-    def __init__(self, image_key: str, num_repeats: int, caption: str, is_reg: bool, absolute_path: str) -> None:
-        self.image_key: str = image_key
+    def __init__(self, image_key: str, num_repeats: int, caption: str, is_reg: bool, absolute_path: str, class_tokens: Optional[str] = None) -> None:
+        self.image_key: str = image_key # image_key is a unique key for each image
         self.num_repeats: int = num_repeats
         self.caption: str = caption
         self.is_reg: bool = is_reg
         self.absolute_path: str = absolute_path
+        self.class_tokens: Optional[str] = class_tokens
         self.image_size: Tuple[int, int] = None
         self.resized_size: Tuple[int, int] = None
         self.bucket_reso: Tuple[int, int] = None
@@ -145,6 +168,15 @@ class ImageInfo:
         self.text_encoder_outputs1: Optional[torch.Tensor] = None
         self.text_encoder_outputs2: Optional[torch.Tensor] = None
         self.text_encoder_pool2: Optional[torch.Tensor] = None
+        # mask informations, optional
+        self.mask_path: Optional[str] = None
+        # assert mask path
+        if self.mask_path:
+            assert os.path.exists(self.mask_path), f"mask path {self.mask_path} does not exist for image {self.image_key} but specified"
+            print(f"Mask path is specified as {self.mask_path} for image {self.image_key}.")
+        self.mask: Optional[torch.Tensor] = None # mask is a tensor of shape (1, 1, H, W)
+        # shift_images
+        self.shift_images: Optional[str] = None # shift_images is image path directory to find variations of the image
 
 
 class BucketManager:
@@ -305,12 +337,47 @@ class BucketBatchIndex(NamedTuple):
     bucket_batch_size: int
     batch_index: int
 
+class RuntimeImageShifter:
+    """
+    Changes images at runtime, i.e. a_v1.png <-> {a_v2.png, a_v3.png,...}
+    """
+    def __init__(self, pattern:str="_v[0-9]+"):
+        self.pattern = pattern
+        
+    @cache
+    def find_variations(self, file_name:str, search_dir:str) -> List[str]:
+        """
+        Find variations of the file_name in the search_dir.
+        """
+        # find variations
+        variations = []
+        file_name_only = os.path.basename(file_name) # file name without directory
+        file_name_without_ext = os.path.splitext(file_name_only)[0] # file name without extension
+        # search for variations with self.pattern, such as a_v1.png, a_v2.png, a_v3.png, etc.
+        pattern = re.compile(f"{file_name_without_ext}{self.pattern}\.(png|jpg|jpeg|webp|PNG|JPG|JPEG|WEBP)$")
+        for file in os.listdir(search_dir):
+            if pattern.match(file):
+                variations.append(os.path.join(search_dir, file))
+        return variations
+    
+    def get_variation(self, file_name:str, search_dir:str) -> str:
+        """
+        Get a variation of the file_name in the search_dir.
+        """
+        variations = self.find_variations(file_name, search_dir)
+        if len(variations) == 0:
+            return file_name
+        else:
+            return random.choice(variations)
 
 class AugHelper:
     # albumentationsへの依存をなくしたがとりあえず同じinterfaceを持たせる
 
     def __init__(self):
         pass
+
+    def default_aug(self, image: np.ndarray):
+        return {"image": image}
 
     def color_aug(self, image: np.ndarray):
         # self.color_aug_method = albu.OneOf(
@@ -340,7 +407,7 @@ class AugHelper:
         return {"image": image}
 
     def get_augmentor(self, use_color_aug: bool):  # -> Optional[Callable[[np.ndarray], Dict[str, np.ndarray]]]:
-        return self.color_aug if use_color_aug else None
+        return self.color_aug if use_color_aug else self.default_aug
 
 
 class BaseSubset:
@@ -363,6 +430,8 @@ class BaseSubset:
         caption_suffix: Optional[str],
         token_warmup_min: int,
         token_warmup_step: Union[float, int],
+        mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         self.image_dir = image_dir
         self.num_repeats = num_repeats
@@ -382,8 +451,14 @@ class BaseSubset:
 
         self.token_warmup_min = token_warmup_min  # step=0におけるタグの数
         self.token_warmup_step = token_warmup_step  # N（N<1ならN*max_train_steps）ステップ目でタグの数が最大になる
+        
+        self.mask_dir = mask_dir    # mask directory that is used for training
+        self.shift_images_dir = shift_images_dir # shift_images directory that is used for training
 
         self.img_count = 0
+        
+    def is_cacheable(self):
+        return not self.color_aug and not self.random_crop
 
 
 class DreamBoothSubset(BaseSubset):
@@ -409,6 +484,8 @@ class DreamBoothSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -430,6 +507,8 @@ class DreamBoothSubset(BaseSubset):
             caption_suffix,
             token_warmup_min,
             token_warmup_step,
+            mask_dir=mask_dir,
+            shift_images_dir=shift_images_dir,
         )
 
         self.is_reg = is_reg
@@ -465,6 +544,8 @@ class FineTuningSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         assert metadata_file is not None, "metadata_file must be specified / metadata_fileは指定が必須です"
 
@@ -486,6 +567,8 @@ class FineTuningSubset(BaseSubset):
             caption_suffix,
             token_warmup_min,
             token_warmup_step,
+            mask_dir=mask_dir,
+            shift_images_dir=shift_images_dir,
         )
 
         self.metadata_file = metadata_file
@@ -518,6 +601,8 @@ class ControlNetSubset(BaseSubset):
         caption_suffix,
         token_warmup_min,
         token_warmup_step,
+        mask_dir: Optional[str] = None,
+        shift_images_dir: Optional[str] = None,
     ) -> None:
         assert image_dir is not None, "image_dir must be specified / image_dirは指定が必須です"
 
@@ -539,6 +624,8 @@ class ControlNetSubset(BaseSubset):
             caption_suffix,
             token_warmup_min,
             token_warmup_step,
+            mask_dir=mask_dir,
+            shift_images_dir=shift_images_dir,
         )
 
         self.conditioning_data_dir = conditioning_data_dir
@@ -591,9 +678,13 @@ class BaseDataset(torch.utils.data.Dataset):
         self.current_step: int = 0
         self.max_train_steps: int = 0
         self.seed: int = 0
+        
+        # DreamBooth 
+        self.prior_loss_weight: float = 0.0
 
         # augmentation
         self.aug_helper = AugHelper()
+        self.image_shifter = RuntimeImageShifter()
 
         self.image_transforms = IMAGE_TRANSFORMS
 
@@ -643,7 +734,10 @@ class BaseDataset(torch.utils.data.Dataset):
     def add_replacement(self, str_from, str_to):
         self.replacements[str_from] = str_to
 
-    def process_caption(self, subset: BaseSubset, caption):
+    def process_caption(self, subset: BaseSubset, caption, class_tokens:Optional[str] = None):
+        """
+        captionに対して前処理を行う
+        """
         # caption に prefix/suffix を付ける
         if subset.caption_prefix:
             caption = subset.caption_prefix + " " + caption
@@ -659,7 +753,7 @@ class BaseDataset(torch.utils.data.Dataset):
         )
 
         if is_drop_out:
-            caption = ""
+            caption = "" if class_tokens is None else class_tokens
         else:
             if subset.shuffle_caption or subset.token_warmup_step > 0 or subset.caption_tag_dropout_rate > 0:
                 fixed_tokens = []
@@ -719,56 +813,79 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return caption
 
-    def get_input_ids(self, caption, tokenizer=None):
+    def get_input_ids(self, caption, tokenizer=None, class_tokens:Optional[str] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        captionをtokenizerで処理し、input_idsを返す
+        tokenizerがNoneの場合はself.tokenizers[0]を使う
+        class_tokensがNoneの場合はcaptionからclass_tokensを除いたものを使う
+        """
         if tokenizer is None:
             tokenizer = self.tokenizers[0]
 
         input_ids = tokenizer(
             caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
         ).input_ids
+        if class_tokens is None:
+            input_ids_without_class_tokens = input_ids.clone()
+        else:
+            pre_caption = caption.replace(class_tokens or "", "").strip()
+            input_ids_without_class_tokens = tokenizer(
+                pre_caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
+            ).input_ids
+        def get_ids(input_ids):
+            if self.tokenizer_max_length > tokenizer.model_max_length:
+                input_ids = input_ids.squeeze(0)
+                iids_list = []
+                if tokenizer.pad_token_id == tokenizer.eos_token_id:
+                    # v1
+                    # 77以上の時は "<BOS> .... <EOS> <EOS> <EOS>" でトータル227とかになっているので、"<BOS>...<EOS>"の三連に変換する
+                    # 1111氏のやつは , で区切る、とかしているようだが　とりあえず単純に
+                    for i in range(
+                        1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2
+                    ):  # (1, 152, 75)
+                        ids_chunk = (
+                            input_ids[0].unsqueeze(0),
+                            input_ids[i : i + tokenizer.model_max_length - 2],
+                            input_ids[-1].unsqueeze(0),
+                        )
+                        ids_chunk = torch.cat(ids_chunk)
+                        iids_list.append(ids_chunk)
+                else:
+                    # v2 or SDXL
+                    # 77以上の時は "<BOS> .... <EOS> <PAD> <PAD>..." でトータル227とかになっているので、"<BOS>...<EOS> <PAD> <PAD> ..."の三連に変換する
+                    for i in range(1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2):
+                        ids_chunk = (
+                            input_ids[0].unsqueeze(0),  # BOS
+                            input_ids[i : i + tokenizer.model_max_length - 2],
+                            input_ids[-1].unsqueeze(0),
+                        )  # PAD or EOS
+                        ids_chunk = torch.cat(ids_chunk)
 
-        if self.tokenizer_max_length > tokenizer.model_max_length:
-            input_ids = input_ids.squeeze(0)
-            iids_list = []
-            if tokenizer.pad_token_id == tokenizer.eos_token_id:
-                # v1
-                # 77以上の時は "<BOS> .... <EOS> <EOS> <EOS>" でトータル227とかになっているので、"<BOS>...<EOS>"の三連に変換する
-                # 1111氏のやつは , で区切る、とかしているようだが　とりあえず単純に
-                for i in range(
-                    1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2
-                ):  # (1, 152, 75)
-                    ids_chunk = (
-                        input_ids[0].unsqueeze(0),
-                        input_ids[i : i + tokenizer.model_max_length - 2],
-                        input_ids[-1].unsqueeze(0),
-                    )
-                    ids_chunk = torch.cat(ids_chunk)
-                    iids_list.append(ids_chunk)
-            else:
-                # v2 or SDXL
-                # 77以上の時は "<BOS> .... <EOS> <PAD> <PAD>..." でトータル227とかになっているので、"<BOS>...<EOS> <PAD> <PAD> ..."の三連に変換する
-                for i in range(1, self.tokenizer_max_length - tokenizer.model_max_length + 2, tokenizer.model_max_length - 2):
-                    ids_chunk = (
-                        input_ids[0].unsqueeze(0),  # BOS
-                        input_ids[i : i + tokenizer.model_max_length - 2],
-                        input_ids[-1].unsqueeze(0),
-                    )  # PAD or EOS
-                    ids_chunk = torch.cat(ids_chunk)
+                        # 末尾が <EOS> <PAD> または <PAD> <PAD> の場合は、何もしなくてよい
+                        # 末尾が x <PAD/EOS> の場合は末尾を <EOS> に変える（x <EOS> なら結果的に変化なし）
+                        if ids_chunk[-2] != tokenizer.eos_token_id and ids_chunk[-2] != tokenizer.pad_token_id:
+                            ids_chunk[-1] = tokenizer.eos_token_id
+                        # 先頭が <BOS> <PAD> ... の場合は <BOS> <EOS> <PAD> ... に変える
+                        if ids_chunk[1] == tokenizer.pad_token_id:
+                            ids_chunk[1] = tokenizer.eos_token_id
 
-                    # 末尾が <EOS> <PAD> または <PAD> <PAD> の場合は、何もしなくてよい
-                    # 末尾が x <PAD/EOS> の場合は末尾を <EOS> に変える（x <EOS> なら結果的に変化なし）
-                    if ids_chunk[-2] != tokenizer.eos_token_id and ids_chunk[-2] != tokenizer.pad_token_id:
-                        ids_chunk[-1] = tokenizer.eos_token_id
-                    # 先頭が <BOS> <PAD> ... の場合は <BOS> <EOS> <PAD> ... に変える
-                    if ids_chunk[1] == tokenizer.pad_token_id:
-                        ids_chunk[1] = tokenizer.eos_token_id
+                        iids_list.append(ids_chunk)
 
-                    iids_list.append(ids_chunk)
-
-            input_ids = torch.stack(iids_list)  # 3,77
-        return input_ids
+                input_ids = torch.stack(iids_list)  # 3,77
+                return input_ids
+        caption_ids = get_ids(input_ids)
+        if class_tokens is None:
+            caption_ids_without_class_tokens = get_ids(input_ids_without_class_tokens)
+        else:
+            caption_ids_without_class_tokens = caption_ids.clone()
+        return caption_ids, caption_ids_without_class_tokens
 
     def register_image(self, info: ImageInfo, subset: BaseSubset):
+        """
+        Registers image info to the dataset's internal data structure.
+        info: ImageInfo
+        subset: BaseSubset
+        """
         self.image_data[info.image_key] = info
         self.image_to_subset[info.image_key] = subset
 
@@ -881,7 +998,7 @@ class BaseDataset(torch.utils.data.Dataset):
         )
 
     def is_latent_cacheable(self):
-        return all([not subset.color_aug and not subset.random_crop for subset in self.subsets])
+        return all([subset.is_cacheable() for subset in self.subsets])
 
     def is_text_encoder_output_cacheable(self):
         return all(
@@ -991,9 +1108,9 @@ class BaseDataset(torch.utils.data.Dataset):
         batch = []
         batches = []
         for info in image_infos_to_cache:
-            input_ids1 = self.get_input_ids(info.caption, tokenizers[0])
-            input_ids2 = self.get_input_ids(info.caption, tokenizers[1])
-            batch.append((info, input_ids1, input_ids2))
+            input_ids1, ids_without_cls1 = self.get_input_ids(info.caption, tokenizers[0], info.class_tokens)
+            input_ids2, ids_without_cls2 = self.get_input_ids(info.caption, tokenizers[1], info.class_tokens)
+            batch.append((info, input_ids1, input_ids2, ids_without_cls1, ids_without_cls2))
 
             if len(batch) >= self.batch_size:
                 batches.append(batch)
@@ -1005,11 +1122,12 @@ class BaseDataset(torch.utils.data.Dataset):
         # iterate batches: call text encoder and cache outputs for memory or disk
         print("caching text encoder outputs...")
         for batch in tqdm(batches):
-            infos, input_ids1, input_ids2 = zip(*batch)
+            infos, input_ids1, input_ids2, ids_without_cls1, ids_without_cls2 = zip(*batch)
             input_ids1 = torch.stack(input_ids1, dim=0)
             input_ids2 = torch.stack(input_ids2, dim=0)
             cache_batch_text_encoder_outputs(
-                infos, tokenizers, text_encoders, self.max_token_length, cache_to_disk, input_ids1, input_ids2, weight_dtype
+                infos, tokenizers, text_encoders, self.max_token_length, cache_to_disk, input_ids1, input_ids2, weight_dtype,
+                ids_without_cls1, ids_without_cls2
             )
 
     def get_image_size(self, image_path):
@@ -1017,11 +1135,16 @@ class BaseDataset(torch.utils.data.Dataset):
         return image.size
 
     def load_image_with_face_info(self, subset: BaseSubset, image_path: str):
+        """
+        画像を読み込み、顔の位置情報を返す
+        Loads an image and returns face position information.
+        The image should have <filename>_cx_cy_w_h.jpg format for augmentation.
+        """
         img = load_image(image_path)
 
         face_cx = face_cy = face_w = face_h = 0
         if subset.face_crop_aug_range is not None:
-            tokens = os.path.splitext(os.path.basename(image_path))[0].split("_")
+            tokens = os.path.splitext(os.path.basename(image_path))[0].split("_") # example filename : aaaaaa_<face_cx>_<face_cy>_<face_w>_<face_h>.jpg
             if len(tokens) >= 5:
                 face_cx = int(tokens[-4])
                 face_cy = int(tokens[-3])
@@ -1093,6 +1216,8 @@ class BaseDataset(torch.utils.data.Dataset):
         captions = []
         input_ids_list = []
         input_ids2_list = []
+        input_ids_list_without_cls = []
+        input_ids2_list_without_cls = []
         latents_list = []
         images = []
         original_sizes_hw = []
@@ -1102,11 +1227,19 @@ class BaseDataset(torch.utils.data.Dataset):
         text_encoder_outputs1_list = []
         text_encoder_outputs2_list = []
         text_encoder_pool2_list = []
-
+        cls_tokens_list = []
+        text_encoder_outputs1_without_cls_list = []
+        text_encoder_outputs2_without_cls_list = []
+        text_encoder_pool2_without_cls_list = []
+        mask_images = []
+        image_size_logged = None
+        image_size_base = None
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
-            image_info = self.image_data[image_key]
+            image_info:ImageInfo = self.image_data[image_key]
+            cls_tokens_list.append(image_info.class_tokens)
             subset = self.image_to_subset[image_key]
             loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
+            mask_images.append(image_info.mask)
 
             flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
 
@@ -1126,19 +1259,29 @@ class BaseDataset(torch.utils.data.Dataset):
                     latents = flipped_latents
                     del flipped_latents
                 latents = torch.FloatTensor(latents)
+                if image_size_logged is None:
+                    # 一度だけログを出す
+                    image_size_logged = latents.shape
+                    image_size_base = image_info.absolute_path
+                else:
+                    assert image_size_logged == latents.shape, f"latents shape mismatch / latentsのサイズが一定でないようです: {image_info.absolute_path}, bucket_reso={image_info.bucket_reso}, \
+                        latents.shape={latents.shape}, previous_latent.shape={image_size_logged}, from {image_size_base}"
 
                 image = None
             else:
+                path_to_load = image_info.absolute_path
+                if image_info.shift_images:
+                    path_to_load = self.image_shifter.get_variation(path_to_load, image_info.shift_images)
                 # 画像を読み込み、必要ならcropする
-                img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, image_info.absolute_path)
+                img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, path_to_load)
                 im_h, im_w = img.shape[0:2]
 
-                if self.enable_bucket:
+                if self.enable_bucket: # bucketingを有効にしている場合は、画像サイズをbucketに合わせる
                     img, original_size, crop_ltrb = trim_and_resize_if_required(
                         subset.random_crop, img, image_info.bucket_reso, image_info.resized_size
                     )
                 else:
-                    if face_cx > 0:  # 顔位置情報あり
+                    if face_cx > 0:  # 顔位置情報あり Note : it won't work if image didn't have face info as filename_face_cx_cy_w_h.jpg
                         img = self.crop_target(subset, img, face_cx, face_cy, face_w, face_h)
                     elif im_h > self.height or im_w > self.width:
                         assert (
@@ -1161,8 +1304,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 # augmentation
                 aug = self.aug_helper.get_augmentor(subset.color_aug)
-                if aug is not None:
-                    img = aug(image=img)["image"]
+                img = aug(image=img)["image"]
 
                 if flipped:
                     img = img[:, ::-1, :].copy()  # copy to avoid negative stride problem
@@ -1192,17 +1334,24 @@ class BaseDataset(torch.utils.data.Dataset):
                 text_encoder_outputs1_list.append(image_info.text_encoder_outputs1)
                 text_encoder_outputs2_list.append(image_info.text_encoder_outputs2)
                 text_encoder_pool2_list.append(image_info.text_encoder_pool2)
+                text_encoder_outputs1_without_cls_list.append(image_info.text_encoder_outputs1_without_cls)
+                text_encoder_outputs2_without_cls_list.append(image_info.text_encoder_outputs2_without_cls)
+                text_encoder_pool2_without_cls_list.append(image_info.text_encoder_pool2_without_cls)
                 captions.append(caption)
             elif image_info.text_encoder_outputs_npz is not None:
-                text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2 = load_text_encoder_outputs_from_disk(
+                text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2, \
+                text_encoder_outputs1_without_cls, text_encoder_outputs2_without_cls, text_encoder_pool2_without_cls = load_text_encoder_outputs_from_disk(
                     image_info.text_encoder_outputs_npz
                 )
                 text_encoder_outputs1_list.append(text_encoder_outputs1)
                 text_encoder_outputs2_list.append(text_encoder_outputs2)
                 text_encoder_pool2_list.append(text_encoder_pool2)
+                text_encoder_outputs1_without_cls_list.append(text_encoder_outputs1_without_cls)
+                text_encoder_outputs2_without_cls_list.append(text_encoder_outputs2_without_cls)
+                text_encoder_pool2_without_cls_list.append(text_encoder_pool2_without_cls)
                 captions.append(caption)
             else:
-                caption = self.process_caption(subset, image_info.caption)
+                caption = self.process_caption(subset, image_info.caption, image_info.class_tokens)
                 if self.XTI_layers:
                     caption_layer = []
                     for layer in self.XTI_layers:
@@ -1216,17 +1365,19 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 if not self.token_padding_disabled:  # this option might be omitted in future
                     if self.XTI_layers:
-                        token_caption = self.get_input_ids(caption_layer, self.tokenizers[0])
+                        token_caption, token_caption_without_cls = self.get_input_ids(caption_layer, self.tokenizers[0])
                     else:
-                        token_caption = self.get_input_ids(caption, self.tokenizers[0])
+                        token_caption, token_caption_without_cls = self.get_input_ids(caption, self.tokenizers[0])
                     input_ids_list.append(token_caption)
+                    input_ids_list_without_cls.append(token_caption_without_cls)
 
                     if len(self.tokenizers) > 1:
                         if self.XTI_layers:
-                            token_caption2 = self.get_input_ids(caption_layer, self.tokenizers[1])
+                            token_caption2, token_caption_without_cls2 = self.get_input_ids(caption_layer, self.tokenizers[1])
                         else:
-                            token_caption2 = self.get_input_ids(caption, self.tokenizers[1])
+                            token_caption2, token_caption_without_cls2 = self.get_input_ids(caption, self.tokenizers[1])
                         input_ids2_list.append(token_caption2)
+                        input_ids2_list_without_cls.append(token_caption_without_cls2)
 
         example = {}
         example["loss_weights"] = torch.FloatTensor(loss_weights)
@@ -1234,28 +1385,50 @@ class BaseDataset(torch.utils.data.Dataset):
         if len(text_encoder_outputs1_list) == 0:
             if self.token_padding_disabled:
                 # padding=True means pad in the batch
+                captions_copy = captions.copy()
+                # using cls_tokens_list to remove cls tokens from each caption
+                for i, caption in enumerate(captions_copy):
+                    captions_copy[i] = caption.replace(cls_tokens_list[i] or "", "")
                 example["input_ids"] = self.tokenizer[0](captions, padding=True, truncation=True, return_tensors="pt").input_ids
+                example["input_ids_without_cls"] = self.tokenizer[0](
+                    captions_copy, padding=True, truncation=True, return_tensors="pt"
+                ).input_ids
+                
                 if len(self.tokenizers) > 1:
                     example["input_ids2"] = self.tokenizer[1](
                         captions, padding=True, truncation=True, return_tensors="pt"
                     ).input_ids
+                    example["input_ids2_without_cls"] = self.tokenizer[1](
+                        captions_copy, padding=True, truncation=True, return_tensors="pt"
+                    ).input_ids
                 else:
                     example["input_ids2"] = None
+                    example["input_ids2_without_cls"] = None
             else:
                 example["input_ids"] = torch.stack(input_ids_list)
+                example["input_ids_without_cls"] = torch.stack(input_ids_list_without_cls) if len(self.tokenizers) > 1 else None
                 example["input_ids2"] = torch.stack(input_ids2_list) if len(self.tokenizers) > 1 else None
+                example["input_ids2_without_cls"] = torch.stack(input_ids2_list_without_cls) if len(self.tokenizers) > 1 else None
             example["text_encoder_outputs1_list"] = None
             example["text_encoder_outputs2_list"] = None
             example["text_encoder_pool2_list"] = None
+            example["text_encoder_outputs1_without_cls_list"] = None
+            example["text_encoder_outputs2_without_cls_list"] = None
+            example["text_encoder_pool2_without_cls_list"] = None
         else:
             example["input_ids"] = None
             example["input_ids2"] = None
+            example["input_ids_without_cls"] = None
+            example["input_ids2_without_cls"] = None
             # # for assertion
             # example["input_ids"] = torch.stack([self.get_input_ids(cap, self.tokenizers[0]) for cap in captions])
             # example["input_ids2"] = torch.stack([self.get_input_ids(cap, self.tokenizers[1]) for cap in captions])
             example["text_encoder_outputs1_list"] = torch.stack(text_encoder_outputs1_list)
             example["text_encoder_outputs2_list"] = torch.stack(text_encoder_outputs2_list)
             example["text_encoder_pool2_list"] = torch.stack(text_encoder_pool2_list)
+            example["text_encoder_outputs1_without_cls_list"] = torch.stack(text_encoder_outputs1_without_cls_list)
+            example["text_encoder_outputs2_without_cls_list"] = torch.stack(text_encoder_outputs2_without_cls_list)
+            example["text_encoder_pool2_without_cls_list"] = torch.stack(text_encoder_pool2_without_cls_list)
 
         if images[0] is not None:
             images = torch.stack(images)
@@ -1263,9 +1436,11 @@ class BaseDataset(torch.utils.data.Dataset):
         else:
             images = None
         example["images"] = images
+        example['mask'] = mask_images
 
         example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
         example["captions"] = captions
+        example["captions_without_cls"] = [cap.replace(cls_tokens or "", "") for cap, cls_tokens in zip(captions, cls_tokens_list)]
 
         example["original_sizes_hw"] = torch.stack([torch.LongTensor(x) for x in original_sizes_hw])
         example["crop_top_lefts"] = torch.stack([torch.LongTensor(x) for x in crop_top_lefts])
@@ -1281,6 +1456,8 @@ class BaseDataset(torch.utils.data.Dataset):
         images = []
         input_ids1_list = []
         input_ids2_list = []
+        input_ids1_without_cls_list = []
+        input_ids2_without_cls_list = []
         absolute_paths = []
         resized_sizes = []
         bucket_reso = None
@@ -1309,15 +1486,21 @@ class BaseDataset(torch.utils.data.Dataset):
 
             if self.caching_mode == "text":
                 input_ids1 = self.get_input_ids(caption, self.tokenizers[0])
+                input_ids1_without_cls = self.get_input_ids_without_cls(caption, self.tokenizers[0])
                 input_ids2 = self.get_input_ids(caption, self.tokenizers[1])
+                input_ids2_without_cls = self.get_input_ids_without_cls(caption, self.tokenizers[1])
             else:
                 input_ids1 = None
                 input_ids2 = None
+                input_ids1_without_cls = None
+                input_ids2_without_cls = None
 
             captions.append(caption)
             images.append(image)
             input_ids1_list.append(input_ids1)
             input_ids2_list.append(input_ids2)
+            input_ids1_without_cls_list.append(input_ids1_without_cls)
+            input_ids2_without_cls_list.append(input_ids2_without_cls)
             absolute_paths.append(image_info.absolute_path)
             resized_sizes.append(image_info.resized_size)
 
@@ -1330,6 +1513,8 @@ class BaseDataset(torch.utils.data.Dataset):
         example["captions"] = captions
         example["input_ids1_list"] = input_ids1_list
         example["input_ids2_list"] = input_ids2_list
+        example["input_ids_without_cls"] = input_ids1_without_cls_list
+        example["input_ids2_without_cls"] = input_ids2_without_cls_list
         example["absolute_paths"] = absolute_paths
         example["resized_sizes"] = resized_sizes
         example["flip_aug"] = flip_aug
@@ -1405,6 +1590,13 @@ class DreamBoothDataset(BaseDataset):
             return caption
 
         def load_dreambooth_dir(subset: DreamBoothSubset):
+            """
+            画像ファイルを読み込み、キャプションを読み込む
+            Load image files and read captions.
+            Returns:
+                img_paths: list of image paths / 画像ファイルパスのリスト
+                captions: list of captions / キャプションのリスト
+            """
             if not os.path.isdir(subset.image_dir):
                 print(f"not directory: {subset.image_dir}")
                 return [], []
@@ -1428,6 +1620,9 @@ class DreamBoothDataset(BaseDataset):
                         captions.append(subset.class_tokens)
                         missing_captions.append(img_path)
                     else:
+                        if subset.class_tokens is not None:
+                            # class tokenを追加する
+                            cap_for_img = subset.class_tokens.replace(',', ' ') + ", " + cap_for_img
                         captions.append(cap_for_img)
 
             self.set_tag_frequency(os.path.basename(subset.image_dir), captions)  # タグ頻度を記録
@@ -1473,9 +1668,33 @@ class DreamBoothDataset(BaseDataset):
                 num_reg_images += subset.num_repeats * len(img_paths)
             else:
                 num_train_images += subset.num_repeats * len(img_paths)
-
-            for img_path, caption in zip(img_paths, captions):
-                info = ImageInfo(img_path, subset.num_repeats, caption, subset.is_reg, img_path)
+                
+            mask_dir = subset.mask_dir
+            shift_images = subset.shift_images_dir
+            if mask_dir is not None:
+                print(f"mask_dir is set to {mask_dir} / mask_dirが設定されています: {mask_dir}")
+            any_mask_found = False
+            for img_path, caption in zip(img_paths, captions): # TODO : add mask path here, mask path is directory to use to search matching mask file
+                info = ImageInfo(img_path, subset.num_repeats, caption, subset.is_reg, img_path, class_tokens = subset.class_tokens)
+                if mask_dir:
+                    mask_corresponding_path = search_mask(image_path=img_path, mask_dir=mask_dir)
+                    info.mask_path = mask_corresponding_path
+                    # load image and register to info.mask
+                    if mask_corresponding_path:
+                        print(f"mask found at {mask_corresponding_path} / マスクが見つかりました: {mask_corresponding_path}")
+                        info.mask = load_image(mask_corresponding_path)
+                        # convert to grayscale then divide by 255
+                        mask_image = Image.fromarray(info.mask).convert('L')
+                        mask_image = np.array(mask_image)
+                        mask_image = mask_image / 255
+                        info.mask = mask_image
+                        any_mask_found = True
+                if shift_images:
+                    assert os.path.isdir(shift_images), f"shift_images_dir is not a directory / shift_images_dirがディレクトリではありません: {shift_images}"
+                    assert len(os.listdir(shift_images)) > 0, f"shift_images_dir is empty / shift_images_dirが空です: {shift_images}"
+                    info.shift_images = shift_images
+                        
+                    
                 if subset.is_reg:
                     reg_infos.append(info)
                 else:
@@ -1483,6 +1702,8 @@ class DreamBoothDataset(BaseDataset):
 
             subset.img_count = len(img_paths)
             self.subsets.append(subset)
+        if mask_dir and not any_mask_found:
+            raise RuntimeError(f"No corresponding mask found in {mask_dir} / マスクが見つかりませんでした: {mask_dir}")
 
         print(f"{num_train_images} train images with repeating.")
         self.num_train_images = num_train_images
@@ -1598,7 +1819,7 @@ class FineTuningDataset(BaseDataset):
                 image_info = ImageInfo(image_key, subset.num_repeats, caption, False, abs_path)
                 image_info.image_size = img_md.get("train_resolution")
 
-                if not subset.color_aug and not subset.random_crop:
+                if subset.is_cacheable():
                     # if npz exists, use them
                     image_info.latents_npz, image_info.latents_npz_flipped = self.image_key_to_npz_file(subset, image_key)
 
@@ -1612,7 +1833,7 @@ class FineTuningDataset(BaseDataset):
             self.subsets.append(subset)
 
         # check existence of all npz files
-        use_npz_latents = all([not (subset.color_aug or subset.random_crop) for subset in self.subsets])
+        use_npz_latents = all([subset.is_cacheable() for subset in self.subsets])
         if use_npz_latents:
             flip_aug_in_subset = False
             npz_any = False
@@ -2024,7 +2245,7 @@ def debug_dataset(train_dataset, show_input_ids=False):
             example = train_dataset[idx]
             if example["latents"] is not None:
                 print(f"sample has latents from npz file: {example['latents'].size()}")
-            for j, (ik, cap, lw, iid, orgsz, crptl, trgsz, flpdz) in enumerate(
+            for j, (ik, cap, lw, iid, orgsz, crptl, trgsz, flpdz, iid_wcls) in enumerate(
                 zip(
                     example["image_keys"],
                     example["captions"],
@@ -2034,6 +2255,7 @@ def debug_dataset(train_dataset, show_input_ids=False):
                     example["crop_top_lefts"],
                     example["target_sizes_hw"],
                     example["flippeds"],
+                    example["input_ids_without_cls"],
                 )
             ):
                 print(
@@ -2044,6 +2266,9 @@ def debug_dataset(train_dataset, show_input_ids=False):
                     print(f"input ids: {iid}")
                     if "input_ids2" in example:
                         print(f"input ids2: {example['input_ids2'][j]}")
+                    print(f"input ids without cls: {iid_wcls}")
+                    if "input_ids2_without_cls" in example:
+                        print(f"input ids without cls2: {example['input_ids2_without_cls'][j]}")
                 if example["images"] is not None:
                     im = example["images"][j]
                     print(f"image size: {im.size()}")
@@ -2179,16 +2404,33 @@ def load_arbitrary_dataset(args, tokenizer) -> MinimalDataset:
 
 def load_image(image_path):
     image = Image.open(image_path)
-    if not image.mode == "RGB":
-        image = image.convert("RGB")
+    image = handle_rgba(image)
     img = np.array(image, np.uint8)
     return img
 
+def handle_rgba(image):
+    if not image.mode == "RGB":
+        # if RGBA, transparent area should be white
+        if image.mode == "RGBA":
+            white_background = Image.new("RGB", image.size, (255, 255, 255))
+            white_background.paste(image, mask=image.split()[3])
+            image = white_background
+        else:
+            image = image.convert("RGB") # RGBA -> RGB
+    return image
 
 # 画像を読み込む。戻り値はnumpy.ndarray,(original width, original height),(crop left, crop top, crop right, crop bottom)
 def trim_and_resize_if_required(
     random_crop: bool, image: Image.Image, reso, resized_size: Tuple[int, int]
 ) -> Tuple[np.ndarray, Tuple[int, int], Tuple[int, int, int, int]]:
+    """
+    @param random_crop: if True, crop randomly. if False, crop center.
+    @param image: PIL Image
+    @param reso: (width, height)
+    @param resized_size: (width, height)
+    
+    @return: image, original_size, crop_ltrb
+    """
     image_height, image_width = image.shape[0:2]
     original_size = (image_width, image_height)  # size before resize
 
@@ -2197,8 +2439,8 @@ def trim_and_resize_if_required(
         image = cv2.resize(image, resized_size, interpolation=cv2.INTER_AREA)  # INTER_AREAでやりたいのでcv2でリサイズ
 
     image_height, image_width = image.shape[0:2]
-
-    if image_width > reso[0]:
+    # Note : random crop won't work if image is smaller than resoluion
+    if image_width > reso[0]: # 画像が大きい場合はトリムする / trim if image is large
         trim_size = image_width - reso[0]
         p = trim_size // 2 if not random_crop else random.randint(0, trim_size)
         # print("w", trim_size, p)
@@ -2272,10 +2514,13 @@ def cache_batch_latents(
 
 
 def cache_batch_text_encoder_outputs(
-    image_infos, tokenizers, text_encoders, max_token_length, cache_to_disk, input_ids1, input_ids2, dtype
+    image_infos, tokenizers, text_encoders, max_token_length, cache_to_disk, input_ids1, input_ids2, dtype,
+    ids_without_cls1=None, ids_without_cls2=None
 ):
     input_ids1 = input_ids1.to(text_encoders[0].device)
     input_ids2 = input_ids2.to(text_encoders[1].device)
+    ids_without_cls1 = ids_without_cls1.to(text_encoders[0].device) if ids_without_cls1 is not None else None
+    ids_without_cls2 = ids_without_cls2.to(text_encoders[1].device) if ids_without_cls2 is not None else None
 
     with torch.no_grad():
         b_hidden_state1, b_hidden_state2, b_pool2 = get_hidden_states_sdxl(
@@ -2286,29 +2531,50 @@ def cache_batch_text_encoder_outputs(
             tokenizers[1],
             text_encoders[0],
             text_encoders[1],
-            dtype,
+            dtype
+        )
+        b_hidden_state1_without_cls, b_hidden_state2_without_cls, b_pool2_without_cls = get_hidden_states_sdxl(
+            max_token_length,
+            ids_without_cls1,
+            ids_without_cls2,
+            tokenizers[0],
+            tokenizers[1],
+            text_encoders[0],
+            text_encoders[1],
+            dtype
         )
 
         # ここでcpuに移動しておかないと、上書きされてしまう
         b_hidden_state1 = b_hidden_state1.detach().to("cpu")  # b,n*75+2,768
         b_hidden_state2 = b_hidden_state2.detach().to("cpu")  # b,n*75+2,1280
+        b_hidden_state1_without_cls = b_hidden_state1_without_cls.detach().to("cpu")  # b,n*75,768
+        b_hidden_state2_without_cls = b_hidden_state2_without_cls.detach().to("cpu")  # b,n*75,1280
         b_pool2 = b_pool2.detach().to("cpu")  # b,1280
+        b_pool2_without_cls = b_pool2_without_cls.detach().to("cpu")  # b,1280
 
-    for info, hidden_state1, hidden_state2, pool2 in zip(image_infos, b_hidden_state1, b_hidden_state2, b_pool2):
+    for info, hidden_state1, hidden_state2, pool2, hidden_state1_without_cls1, hidden_state1_without_cls2, pool2_without_cls in \
+        zip(image_infos, b_hidden_state1, b_hidden_state2, b_pool2, b_hidden_state1_without_cls, b_hidden_state2_without_cls, b_pool2_without_cls):
         if cache_to_disk:
-            save_text_encoder_outputs_to_disk(info.text_encoder_outputs_npz, hidden_state1, hidden_state2, pool2)
+            save_text_encoder_outputs_to_disk(info.text_encoder_outputs_npz, hidden_state1, hidden_state2, pool2,
+                                              hidden_state1_without_cls1, hidden_state1_without_cls2, pool2_without_cls)
         else:
             info.text_encoder_outputs1 = hidden_state1
             info.text_encoder_outputs2 = hidden_state2
             info.text_encoder_pool2 = pool2
+            info.text_encoder_outputs1_without_cls = hidden_state1_without_cls1
+            info.text_encoder_outputs2_without_cls = hidden_state1_without_cls2
+            info.text_encoder_pool2_without_cls = pool2_without_cls
 
 
-def save_text_encoder_outputs_to_disk(npz_path, hidden_state1, hidden_state2, pool2):
+def save_text_encoder_outputs_to_disk(npz_path, hidden_state1, hidden_state2, pool2, hidden_state1_without_cls, hidden_state2_without_cls, pool2_without_cls):
     np.savez(
         npz_path,
         hidden_state1=hidden_state1.cpu().float().numpy(),
         hidden_state2=hidden_state2.cpu().float().numpy(),
         pool2=pool2.cpu().float().numpy(),
+        hidden_state1_without_cls=hidden_state1_without_cls.cpu().float().numpy(),
+        hidden_state2_without_cls=hidden_state2_without_cls.cpu().float().numpy(),
+        pool2_without_cls=pool2_without_cls.cpu().float().numpy(),
     )
 
 
@@ -2317,7 +2583,10 @@ def load_text_encoder_outputs_from_disk(npz_path):
         hidden_state1 = torch.from_numpy(f["hidden_state1"])
         hidden_state2 = torch.from_numpy(f["hidden_state2"]) if "hidden_state2" in f else None
         pool2 = torch.from_numpy(f["pool2"]) if "pool2" in f else None
-    return hidden_state1, hidden_state2, pool2
+        hidden_state1_without_cls = torch.from_numpy(f["hidden_state1_without_cls"]) if "hidden_state1_without_cls" in f else None
+        hidden_state2_without_cls = torch.from_numpy(f["hidden_state2_without_cls"]) if "hidden_state2_without_cls" in f else None
+        pool2_without_cls = torch.from_numpy(f["pool2_without_cls"]) if "pool2_without_cls" in f else None
+    return hidden_state1, hidden_state2, pool2, hidden_state1_without_cls, hidden_state2_without_cls, pool2_without_cls
 
 
 # endregion
@@ -2834,7 +3103,12 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="save training state additionally (including optimizer states etc.) / optimizerなど学習状態も含めたstateを追加で保存する",
     )
     parser.add_argument("--resume", type=str, default=None, help="saved state to resume training / 学習再開するモデルのstate")
-
+    # enable_hypertile
+    parser.add_argument(
+        "--enable_hypertile",
+        default=False,
+        help="enable hypertile (experimental) / hypertileを有効にする（実験的）",
+    )
     parser.add_argument("--train_batch_size", type=int, default=1, help="batch size for training / 学習時のバッチサイズ")
     parser.add_argument(
         "--max_token_length",
@@ -3110,6 +3384,14 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         parser.add_argument(
             "--prior_loss_weight", type=float, default=1.0, help="loss weight for regularization images / 正則化画像のlossの重み"
         )
+        
+def add_webui_args(parser: argparse.ArgumentParser):
+    # use_external_webui:bool, webui_url:str, webui_auth:str
+    parser.add_argument("--use_external_webui", type=bool, default=False, help="use external webui / 外部webuiを使用する")
+    parser.add_argument("--webui_url", type=str, default=None, help="webui url / webuiのURL")
+    parser.add_argument("--webui_auth", type=str, default=None, help="webui auth / webuiの認証情報, user:password")
+    # should_wait_webui_process
+    parser.add_argument("--should_wait_webui_process", type=bool, default=False, help="wait webui process / webuiプロセスの終了を待つ")
 
 
 def verify_training_args(args: argparse.Namespace):
@@ -3265,6 +3547,10 @@ def add_dataset_arguments(
         default=None,
         help="dataset class for arbitrary dataset (package.module.Class) / 任意のデータセットを用いるときのクラス名 (package.module.Class)",
     )
+    
+    # mask_dir and shift_images_dir
+    parser.add_argument("--mask_dir", type=str, default=None, help="directory for mask images / マスク画像データのディレクトリ")
+    parser.add_argument("--shift_images_dir", type=str, default=None, help="directory for shift images / シフト画像データのディレクトリ")
 
     if support_caption_dropout:
         # Textual Inversion はcaptionのdropoutをsupportしない
@@ -3826,7 +4112,7 @@ def prepare_dataset_args(args: argparse.Namespace, support_metadata: bool):
         args.face_crop_aug_range = None
 
     if support_metadata:
-        if args.in_json is not None and (args.color_aug or args.random_crop):
+        if args.in_json is not None and (args.color_aug or args.random_crop or args.shift_images_dir):
             print(
                 f"latents in npz is ignored when color_aug or random_crop is True / color_augまたはrandom_cropを有効にした場合、npzファイルのlatentsは無視されます"
             )
@@ -3864,7 +4150,10 @@ def prepare_accelerator(args: argparse.Namespace):
         logging_dir = None
     else:
         log_prefix = "" if args.log_prefix is None else args.log_prefix
-        logging_dir = args.logging_dir + "/" + log_prefix + time.strftime("%Y%m%d%H%M%S", time.localtime())
+        if args.log_with and args.log_with.lower() not in ["aim", "all"]:
+            logging_dir = args.logging_dir + "/" + log_prefix + time.strftime("%Y%m%d%H%M%S", time.localtime())
+        else:
+            logging_dir = args.logging_dir # aim は日付を付けない
 
     if args.log_with is None:
         if logging_dir is not None:
@@ -4641,8 +4930,15 @@ def sample_images_common(
     """
     StableDiffusionLongPromptWeightingPipelineの改造版を使うようにしたので、clip skipおよびプロンプトの重みづけに対応した
     """
+    check_webui_state() # throws exception if webui had an error
     if steps == 0:
         if not args.sample_at_first:
+            return
+    if args.sample_every_n_steps is None and args.sample_every_n_epochs is None:
+        return
+    if args.sample_every_n_epochs is not None:
+        # sample_every_n_steps は無視する
+        if epoch is None or epoch % args.sample_every_n_epochs != 0:
             return
     else:
         if args.sample_every_n_steps is None and args.sample_every_n_epochs is None:
@@ -4657,8 +4953,40 @@ def sample_images_common(
 
     print(f"\ngenerating sample images at step / サンプル画像生成 ステップ: {steps}")
     if not os.path.isfile(args.sample_prompts):
-        print(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
+        if not os.path.exists(args.sample_prompts):
+            print(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
+        else:
+            print(f"Prompt file is a directory / プロンプトファイルがディレクトリです: {args.sample_prompts}")
         return
+    
+    # check if generate by external webui is enabled #use_external_webui:bool, webui_url:str, webui_auth:str
+    if args.use_external_webui:
+        if args.webui_url is None or "http" not in args.webui_url:
+            print("webui_url is not set or invalid, generating images locally.")
+        else:
+            ckpt_saved_file = os.path.join(args.output_dir, get_epoch_ckpt_name(args, ".safetensors", epoch))
+            if not os.path.isfile(ckpt_saved_file):
+                # try last epoch
+                ckpt_saved_file = os.path.join(args.output_dir, get_last_ckpt_name(args, ".safetensors"))
+                if not os.path.isfile(ckpt_saved_file):
+                    print("No checkpoint file found, generating images locally.")
+                    ckpt_saved_file = None
+                    return
+            request_success, message = wrap_sample_images_external_webui(args.sample_prompts,
+                                        args.output_dir + "/sample",
+                                        args.output_name,
+                                        accelerator,
+                                        args.webui_url,
+                                        args.webui_auth,
+                                        abs_ckpt_path=ckpt_saved_file,
+                                        steps=steps,
+                                        should_sync=args.should_wait_webui_process) # sends file
+        if message:
+            print(message)
+        if request_success:
+            return
+        else:
+            print("Failed to send request to external webui, generating images locally.")
 
     org_vae_device = vae.device  # CPUにいるはず
     vae.to(device)
@@ -4752,7 +5080,7 @@ def sample_images_common(
                     negative_prompt = negative_prompt.replace(prompt_replacement[0], prompt_replacement[1])
 
             if controlnet_image is not None:
-                controlnet_image = Image.open(controlnet_image).convert("RGB")
+                controlnet_image = handle_rgba(Image.open(controlnet_image))
                 controlnet_image = controlnet_image.resize((width, height), Image.LANCZOS)
 
             height = max(64, height - height % 8)  # round to divisible by 8
@@ -4796,9 +5124,36 @@ def sample_images_common(
                     import wandb
                 except ImportError:  # 事前に一度確認するのでここはエラー出ないはず
                     raise ImportError("No wandb / wandb がインストールされていないようです")
-
-                wandb_tracker.log({f"sample_{i}": wandb.Image(image)})
+                # log generation information to wandb
+                logging_caption_key = f"prompt : {prompt} seed: {str(seed)}"
+                # remove invalid characters from the caption for filenames
+                logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
+                wandb_tracker.log(
+                    {
+                        logging_caption_key: wandb.Image(image, caption=f"negative_prompt: {negative_prompt}"),
+                    },
+                    commit=False, # don't step forward
+                )
             except:  # wandb 無効時
+                pass
+            # aim有効時のみログを送信
+            try:
+                aim_tracker = accelerator.get_tracker("aim")
+                try:
+                    import aim
+                except ImportError:  # 事前に一度確認するのでここはエラー出ないはず
+                    raise ImportError("No aim / aim がインストールされていないようです")
+                # log generation information to aim
+                logging_caption_key = f"prompt : {prompt} seed: {str(seed)}"
+                # remove invalid characters from the caption for filenames
+                logging_caption_key = re.sub(r"[^a-zA-Z0-9_\-. ]+", "", logging_caption_key)
+                aim_tracker.log(
+                    {
+                        logging_caption_key: aim.Image(image, caption=f"negative_prompt: {negative_prompt}"),
+                    },
+                    step = steps,
+                )
+            except:
                 pass
 
     # clear pipeline and cache to reduce vram usage
@@ -4827,7 +5182,7 @@ class ImageLoadingDataset(torch.utils.data.Dataset):
         img_path = self.images[idx]
 
         try:
-            image = Image.open(img_path).convert("RGB")
+            image = handle_rgba(Image.open(img_path))
             # convert to tensor temporarily so dataloader will accept it
             tensor_pil = transforms.functional.pil_to_tensor(image)
         except Exception as e:

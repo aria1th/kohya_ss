@@ -9,6 +9,9 @@ import time
 import json
 from multiprocessing import Value
 import toml
+from library.hypertile import split_attention, flush
+from library.hypertile import set_seed as hypertile_set_seed
+from networks.lora import LoRANetwork
 
 from tqdm import tqdm
 import torch
@@ -21,8 +24,15 @@ try:
         from library.ipex import ipex_init
 
         ipex_init()
-except Exception:
+        # can throw RuntimeError if IPEX is not available, or ImportError if IPEX is not installed or ModuleNotFoundError if IPEX is not installed
+except Exception: # noqa E722
     pass
+
+try:
+    from setproctitle import setproctitle
+except (ImportError, ModuleNotFoundError):
+    setproctitle = lambda x: None # does nothing
+
 from accelerate.utils import set_seed
 from diffusers import DDPMScheduler
 from library import model_util
@@ -30,6 +40,10 @@ from library import model_util
 import library.train_util as train_util
 from library.train_util import (
     DreamBoothDataset,
+)
+from library.webui_utils import (
+    wait_until_finished,
+    check_ping_webui
 )
 import library.config_util as config_util
 from library.config_util import (
@@ -45,6 +59,11 @@ from library.custom_train_functions import (
     scale_v_prediction_loss_like_noise_prediction,
     add_v_prediction_like_loss,
     apply_debiased_estimation,
+    apply_gor_loss_precalculated,
+    apply_mask_loss
+)
+from library.group_orthogonalization_normalization import (
+    precalculate_modules_to_check
 )
 
 
@@ -120,9 +139,14 @@ class NetworkTrainer:
             t_enc.to(accelerator.device)
 
     def get_text_cond(self, args, accelerator, batch, tokenizers, text_encoders, weight_dtype):
+        if "input_ids_without_cls" in batch:
+            input_ids_b = batch["input_ids_without_cls"].to(accelerator.device)
+            encoder_hidden_states_b = train_util.get_hidden_states(args, input_ids_b, tokenizers[0], text_encoders[0], weight_dtype)
+        else:
+            encoder_hidden_states_b = None
         input_ids = batch["input_ids"].to(accelerator.device)
         encoder_hidden_states = train_util.get_hidden_states(args, input_ids, tokenizers[0], text_encoders[0], weight_dtype)
-        return encoder_hidden_states
+        return encoder_hidden_states, encoder_hidden_states_b
 
     def call_unet(self, args, accelerator, unet, noisy_latents, timesteps, text_conds, batch, weight_dtype):
         noise_pred = unet(noisy_latents, timesteps, text_conds).sample
@@ -141,7 +165,14 @@ class NetworkTrainer:
         training_started_at = time.time()
         train_util.verify_training_args(args)
         train_util.prepare_dataset_args(args, True)
-
+        if args.webui_url:
+            check_ping_webui(args.webui_url, args.webui_auth)
+        if args.process_title is not None:
+            # attach python/ if not specified
+            if not args.process_title.startswith("python/"):
+                setproctitle("python/" + args.process_title)
+            else:
+                setproctitle(args.process_title) # set process title if available, if import has failed, do nothing
         cache_latents = args.cache_latents
         use_dreambooth_method = args.in_json is None
         use_user_config = args.dataset_config is not None
@@ -149,6 +180,7 @@ class NetworkTrainer:
         if args.seed is None:
             args.seed = random.randint(0, 2**32)
         set_seed(args.seed)
+        hypertile_set_seed(args.seed)
 
         # tokenizerは単体またはリスト、tokenizersは必ずリスト：既存のコードとの互換性のため
         tokenizer = self.load_tokenizer(args)
@@ -174,7 +206,7 @@ class NetworkTrainer:
                         "datasets": [
                             {
                                 "subsets": config_util.generate_dreambooth_subsets_config_by_subdirs(
-                                    args.train_data_dir, args.reg_data_dir
+                                    args.train_data_dir, args.reg_data_dir,mask_dir=args.mask_dir, shift_images_dir=args.shift_images_dir
                                 )
                             }
                         ]
@@ -188,12 +220,13 @@ class NetworkTrainer:
                                     {
                                         "image_dir": args.train_data_dir,
                                         "metadata_file": args.in_json,
+                                        "mask_dir": args.mask_dir,
+                                        "shift_images_dir": args.shift_images_dir,
                                     }
                                 ]
                             }
                         ]
                     }
-
             blueprint = blueprint_generator.generate(user_config, args, tokenizer=tokenizer)
             train_dataset_group = config_util.generate_dataset_group_by_blueprint(blueprint.dataset_group)
         else:
@@ -297,7 +330,7 @@ class NetworkTrainer:
                 # workaround for LyCORIS (;^ω^)
                 net_kwargs["dropout"] = args.network_dropout
 
-            network = network_module.create_network(
+            network:LoRANetwork = network_module.create_network(
                 1.0,
                 args.network_dim,
                 args.network_alpha,
@@ -608,7 +641,6 @@ class NetworkTrainer:
             ), f"There should be a single dataset but {len(train_dataset_group.datasets)} found. This seems to be a bug. / データセットは1個だけ存在するはずですが、実際には{len(train_dataset_group.datasets)}個でした。プログラムのバグかもしれません。"
 
             dataset = train_dataset_group.datasets[0]
-
             dataset_dirs_info = {}
             reg_dataset_dirs_info = {}
             if use_dreambooth_method:
@@ -688,9 +720,33 @@ class NetworkTrainer:
                 init_kwargs['wandb'] = {'name': args.wandb_run_name}
             if args.log_tracker_config is not None:
                 init_kwargs = toml.load(args.log_tracker_config)
+            # if 'wandb.name' is specified, use it as the run name
+            if args.log_tracker_name is None:
+                proj_name = init_kwargs.get("wandb", {}).get("name", None)
+            else:
+                proj_name = args.log_tracker_name
             accelerator.init_trackers(
-                "network_train" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs
+                "network_train" if proj_name is None else proj_name, init_kwargs=init_kwargs
             )
+            if args.log_with in ["wandb", "all"]:
+                try:
+                    import wandb
+                    wandb.define_metric("custom_step")
+                    prompt_path = args.sample_prompts
+                    # .txt then i = lines, json then i = length of list
+                    if prompt_path.endswith(".txt"):
+                        with open(prompt_path, "r", encoding='utf-8') as f:
+                            i = len(f.readlines())
+                    elif prompt_path.endswith(".json"):
+                        with open(prompt_path, "r", encoding='utf-8') as f:
+                            i = len(json.load(f))
+                    elif args.webui_url is not None:
+                        raise ValueError("prompt_path for webui must be .txt or .json")
+                    for _i in range(i):
+                        wandb.define_metric(f"image_{_i}", step_metric = "custom_step")
+                    
+                except (ImportError, ModuleNotFoundError):
+                    pass # wandb is not installed
 
         loss_recorder = train_util.LossRecorder()
         del train_dataset_group
@@ -724,10 +780,18 @@ class NetworkTrainer:
             if os.path.exists(old_ckpt_file):
                 accelerator.print(f"removing old checkpoint: {old_ckpt_file}")
                 os.remove(old_ckpt_file)
+                
+                
+        if args.gor_regularization:
+            modules_to_regularize = precalculate_modules_to_check(network.unet_loras, args.gor_name_to_regularize, args.gor_regularize_fc_layers)
+            accelerator.print(f"modules to regularize: {len(modules_to_regularize)}")
+        else:
+            modules_to_regularize = None
 
         # For --sample_at_first
         self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
+        # print([k for k,v in unet.named_modules() if check_need_to_regularize(v, k, True, ["'up_blocks.*_lora\.up'"])])
         # training loop
         for epoch in range(num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
@@ -767,10 +831,25 @@ class NetworkTrainer:
                                 args.max_token_length // 75 if args.max_token_length else 1,
                                 clip_skip=args.clip_skip,
                             )
+                            if args.contrastive_class_learning:
+                                text_encoder_conds_b = get_weighted_text_embeddings(
+                                    tokenizer,
+                                    text_encoder,
+                                    batch["captions_without_cls"],
+                                    accelerator.device,
+                                    args.max_token_length // 75 if args.max_token_length else 1,
+                                    clip_skip=args.clip_skip,
+                                )
+                            else:
+                                text_encoder_conds_b = None
                         else:
-                            text_encoder_conds = self.get_text_cond(
+                            cond = self.get_text_cond(
                                 args, accelerator, batch, tokenizers, text_encoders, weight_dtype
                             )
+                            if len(cond) == 2:
+                                text_encoder_conds, text_encoder_conds_b = cond
+                            else:
+                                text_encoder_conds = cond
 
                     # Sample noise, sample a random timestep for each image, and add noise to the latents,
                     # with noise offset and/or multires noise if specified
@@ -780,18 +859,73 @@ class NetworkTrainer:
 
                     # Predict the noise residual
                     with accelerator.autocast():
-                        noise_pred = self.call_unet(
-                            args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
-                        )
+                        target_hw = batch["target_sizes_hw"] # torch.stack([torch.LongTensor(x) for x in target_sizes_hw])
+                        # width / height, as single float value
+                        aspect_ratio : float = (target_hw[:, 0] / target_hw[:, 1]).mean().item() 
+                        with split_attention(unet, aspect_ratio=aspect_ratio,
+                                             disable=not args.enable_hypertile):
+                            noise_pred = self.call_unet(
+                                args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds, batch, weight_dtype
+                            )
+                            if args.contrastive_class_learning:
+                                # call without lora
+                                prev_multiplier = network.multiplier
+                                network.set_multiplier(0.0)
+                                noise_pred_vanilla = self.call_unet(
+                                    args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
+                                )
+                                noise_pred_vanilla.requires_grad_(False) # only for loss calculation
+                                network.set_multiplier(prev_multiplier)
+                                noise_pred_with_lora = self.call_unet(
+                                    args, accelerator, unet, noisy_latents, timesteps, text_encoder_conds_b, batch, weight_dtype
+                                )
+                            else:
+                                noise_pred_vanilla = None
+                                noise_pred_with_lora = None
 
                     if args.v_parameterization:
                         # v-parameterization training
                         target = noise_scheduler.get_velocity(latents, noise, timesteps)
                     else:
                         target = noise
+                        
+                    if args.mask_loss:
+                        # mask the noise_pred and target
+                        noise_pred_masked, target_masked = apply_mask_loss(noise_pred, target, batch, mask_loss_weight=args.mask_loss_weight, mask_threshold=args.mask_threshold)
+                        # Here, noise_pred and target are masked tensors with identical shape
+                        noise_pred_residual = noise_pred - noise_pred_masked # residual of noise_pred
+                        target_residual = target - target_masked # residual of target
+                        # here we calculated residuals for debugging so detach them
+                        noise_pred_residual = noise_pred_residual.detach()
+                        target_residual = target_residual.detach()
+                        noise_pred = noise_pred_masked
+                        target = target_masked
+                        
+                        # calculate loss for residuals, then we will log them
+                        loss_residual = torch.nn.functional.mse_loss(noise_pred_residual.float(), target_residual.float(), reduction="none")
+                        loss_residual = loss_residual.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
+                        loss_residual_weights = batch["loss_weights"]  # 各sampleごとのweight
+                        loss_residual = loss_residual * loss_residual_weights
+                        if args.min_snr_gamma:
+                            loss_residual = apply_snr_weight(loss_residual, timesteps, noise_scheduler, args.min_snr_gamma)
+                        if args.scale_v_pred_loss_like_noise_pred:
+                            loss_residual = scale_v_prediction_loss_like_noise_prediction(loss_residual, timesteps, noise_scheduler)
+                        if args.v_pred_like_loss:
+                            loss_residual = add_v_prediction_like_loss(loss_residual, timesteps, noise_scheduler, args.v_pred_like_loss)
+                        loss_residual = loss_residual.mean()  # 平均なのでbatch_sizeで割る必要なし
+                    else:
+                        loss_residual = None # Not used
 
                     loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean([1, 2, 3])
+                    loss = loss.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
+                    
+                    if args.contrastive_class_learning:
+                        # contrastive class learning
+                        loss_vanilla = torch.nn.functional.mse_loss(noise_pred_vanilla.float(), noise_pred_with_lora.float(), reduction="none")
+                        loss_vanilla = loss_vanilla.mean([1, 2, 3]) # mean over channels, width, height -> shape = (batch_size,)
+                        loss = loss + loss_vanilla * args.contrastive_class_learning_weight
+                    else:
+                        loss_vanilla = None
 
                     loss_weights = batch["loss_weights"]  # 各sampleごとのweight
                     loss = loss * loss_weights
@@ -804,7 +938,9 @@ class NetworkTrainer:
                         loss = add_v_prediction_like_loss(loss, timesteps, noise_scheduler, args.v_pred_like_loss)
                     if args.debiased_estimation_loss:
                         loss = apply_debiased_estimation(loss, timesteps, noise_scheduler)
-
+                    # to use this, use --gor_name_to_regularize="lora_up" --gor_regularization=True --gor_regularization_type="inter"
+                    if args.gor_regularization: # required args : gor_num_groups : int, gor_regularization_type: str, gor_name_to_regularize: str, gor_regularize_fc_layers: bool, gor_ortho_decay: float
+                        loss = apply_gor_loss_precalculated(loss, modules_to_regularize, args.gor_num_groups, args.gor_regularization_type, args.gor_ortho_decay)
                     loss = loss.mean()  # 平均なのでbatch_sizeで割る必要なし
 
                     accelerator.backward(loss)
@@ -829,15 +965,14 @@ class NetworkTrainer:
                 if accelerator.sync_gradients:
                     progress_bar.update(1)
                     global_step += 1
-
-                    self.sample_images(accelerator, args, None, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
-
+                    
                     # 指定ステップごとにモデルを保存
                     if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
                         accelerator.wait_for_everyone()
                         if accelerator.is_main_process:
                             ckpt_name = train_util.get_step_ckpt_name(args, "." + args.save_model_as, global_step)
                             save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
+                            self.sample_images(accelerator, args, None, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
                             if args.save_state:
                                 train_util.save_and_remove_state_stepwise(args, accelerator, global_step)
@@ -858,14 +993,18 @@ class NetworkTrainer:
 
                 if args.logging_dir is not None:
                     logs = self.generate_step_logs(args, current_loss, avr_loss, lr_scheduler, keys_scaled, mean_norm, maximum_norm)
+                    if loss_residual is not None:
+                        logs["loss/residual"] = loss_residual.mean().item()
+                    if loss_vanilla is not None:
+                        logs["loss/vanilla"] = loss_vanilla.mean().item()
                     accelerator.log(logs, step=global_step)
 
                 if global_step >= args.max_train_steps:
                     break
 
             if args.logging_dir is not None:
-                logs = {"loss/epoch": loss_recorder.moving_average}
-                accelerator.log(logs, step=epoch + 1)
+                logs = {"loss/epoch": loss_recorder.moving_average, "epoch" : epoch + 1}
+                accelerator.log(logs, step=global_step) # log epoch loss, note that accelerate drops logs with invalid step
 
             accelerator.wait_for_everyone()
 
@@ -883,8 +1022,11 @@ class NetworkTrainer:
 
                     if args.save_state:
                         train_util.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
-
-            self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
+            # if args.use_external_webui is True and (epoch + 1) == num_train_epochs, skip sampling
+            if args.use_external_webui is True and (epoch + 1) == num_train_epochs:
+                pass
+            elif is_main_process:
+                self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
             # end of epoch
 
@@ -893,19 +1035,42 @@ class NetworkTrainer:
 
         if is_main_process:
             network = accelerator.unwrap_model(network)
+            
+        if is_main_process:
+            ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
+            save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
+            # if use_external_webui is True and (epoch + 1) == num_train_epochs, sample here
+            if args.use_external_webui is True:
+                self.sample_images(accelerator, args, num_train_epochs, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
+            print("model saved.")
 
+        wait_until_finished(accelerator=accelerator)
         accelerator.end_training()
 
         if is_main_process and args.save_state:
             train_util.save_state_on_train_end(args, accelerator)
 
-        if is_main_process:
-            ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
-            save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
+def add_gor_args(parser: argparse.ArgumentParser)-> None:
+    # required args : gor_num_groups : int, gor_regularization_type: str, gor_name_to_regularize: str, gor_regularize_fc_layers: bool, gor_ortho_decay: float
+    # num_groups 32, ortho_decay 1e-6, str_filters 'up_blocks.*_lora\.up', reg_type 'inter' or 'intra', regularize_fc_layers : True
+    parser.add_argument("--gor_num_groups", type=int, default=32, help="number of groups for group orthogonality regularization")
+    parser.add_argument("--gor_regularization_type", type=str, default=None, help="type of group orthogonality regularization, 'inter' or 'intra'")
+    parser.add_argument("--gor_name_to_regularize", type=str, default='up_blocks.*_lora\.up', help="name of the layer to regularize, e.g. 'up_blocks.*_lora\.up'")
+    parser.add_argument("--gor_regularize_fc_layers", type=bool, default=True, help="whether to regularize fully connected layers")
+    parser.add_argument("--gor_ortho_decay", type=float, default=1e-6, help="decay for group orthogonality regularization")
+    # whether to enable gor_regularization
+    parser.add_argument("--gor_regularization", type=bool, default=False, help="whether to enable group orthogonality regularization")
+    
+def add_mask_args(parser: argparse.ArgumentParser)-> None:
+    parser.add_argument("--mask_loss", type=bool, default=False, help="whether to enable mask loss")
+    parser.add_argument("--mask_loss_weight", type=float, default=1.0, help="weight for mask loss, 1.0 means mask will fully mask the loss")
+    # mask threshold
+    parser.add_argument("--mask_threshold", type=float, default=1, help="threshold for mask, all values upper than this will be converted to 1, useful for gaussian mask")
+    parser.add_argument("--mask_path", type=str, default=None, help="Directory that contains masks corresponding to the images in the dataset. The mask images should follow <name>_something_mask.fileext.")
 
-            print("model saved.")
-
-
+def add_contrastive_class_learning_args(parser: argparse.ArgumentParser)-> None:
+    parser.add_argument("--contrastive_class_learning", type=bool, default=False, help="whether to enable contrastive class learning")
+    parser.add_argument("--contrastive_class_learning_weight", type=float, default=1.0, help="weight for contrastive class learning loss")
 def setup_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
@@ -913,6 +1078,7 @@ def setup_parser() -> argparse.ArgumentParser:
     train_util.add_dataset_arguments(parser, True, True, True)
     train_util.add_training_arguments(parser, True)
     train_util.add_optimizer_arguments(parser)
+    train_util.add_webui_args(parser)
     config_util.add_config_arguments(parser)
     custom_train_functions.add_custom_train_arguments(parser)
 
@@ -985,6 +1151,17 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not use fp16/bf16 VAE in mixed precision (use float VAE) / mixed precisionでも fp16/bf16 VAEを使わずfloat VAEを使う",
     )
+    
+    # setproctitle if available
+    parser.add_argument(
+        "--process_title",
+        type=str,
+        default=None,
+        help="set process title if available / もし可能ならプロセス名を設定する",
+    )
+    add_gor_args(parser)
+    add_mask_args(parser)
+    add_contrastive_class_learning_args(parser)
     return parser
 
 
@@ -992,7 +1169,8 @@ if __name__ == "__main__":
     parser = setup_parser()
 
     args = parser.parse_args()
+    # debug
+    print(f" Train with contrastive learning : {args.contrastive_class_learning}")
     args = train_util.read_config_from_file(args, parser)
-
     trainer = NetworkTrainer()
     trainer.train(args)
