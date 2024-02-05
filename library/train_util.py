@@ -833,7 +833,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 pre_caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
             ).input_ids
         def get_ids(input_ids):
-            if self.tokenizer_max_length > tokenizer.model_max_length:
+            if self.tokenizer_max_length >= tokenizer.model_max_length:
                 input_ids = input_ids.squeeze(0)
                 iids_list = []
                 if tokenizer.pad_token_id == tokenizer.eos_token_id:
@@ -873,6 +873,8 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 input_ids = torch.stack(iids_list)  # 3,77
                 return input_ids
+            else:
+                raise ValueError("tokenizer_max_length < model_max_length")
         caption_ids = get_ids(input_ids)
         if class_tokens is None:
             caption_ids_without_class_tokens = get_ids(input_ids_without_class_tokens)
