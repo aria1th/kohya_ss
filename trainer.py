@@ -190,6 +190,7 @@ def create_config():
         "lr_warmup_steps": lr_warmup_steps if lr_scheduler != "constant" else None,
         "optimizer_type": optimizer,
         "optimizer_args": optimizer_args if optimizer_args else None,
+        "gradient_accumulation_steps" : 1 if not gradient_accumulation_steps else gradient_accumulation_steps
       },
       "training_arguments": {
         "max_train_steps": max_train_steps,
@@ -439,6 +440,7 @@ def add_training_args(parser : argparse.ArgumentParser) -> List[str]:
   # contrastive_class_learning, contrastive_class_learning_weight
   parser.add_argument('--contrastive_class_learning', type=str, default='False', help='Contrastive class learning for the project (default: False)')
   parser.add_argument('--contrastive_class_learning_weight', type=float, default=1.0, help='Contrastive class learning weight for the project (default: 1.0)')
+  parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Gradient accumulation steps for the project (default: 1)')
   return ['enable_hypertile', 'contrastive_class_learning', 'contrastive_class_learning_weight']
 
 def add_regularization_args(parser : argparse.ArgumentParser) -> List[str]:
@@ -637,6 +639,7 @@ if __name__ == "__main__":
   color_aug = args.color_aug
   class_tokens = args.class_tokens
   is_sdxl = args.sdxl
+  gradient_accumulation_steps = args.gradient_accumulation_steps
   
   xformers = args.xformers
   precision_type = args.precision_type
