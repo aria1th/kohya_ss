@@ -303,6 +303,7 @@ def main():
   # set PATH=%PATH%;%~dp0venv\Lib\site-packages\torch\lib
     # windows, required user venv..
   command_list = [f"{accelerate_executable_path}", "launch", "--config_file="+accelerate_config_file, "--num_cpu_threads_per_process=1", "train_network.py" if not is_sdxl else "sdxl_train_network.py", "--dataset_config="+dataset_config_file, "--config_file="+config_file]
+  print(" ".join(command_list))
   with open(os.path.join(log_folder, "accelerate_launch_commands_log.txt"), "a") as f:
     f.write(" ".join(command_list))
   # init aim if required with aim init --repo <log_folder>

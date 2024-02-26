@@ -165,7 +165,7 @@ class NetworkTrainer:
         training_started_at = time.time()
         train_util.verify_training_args(args)
         train_util.prepare_dataset_args(args, True)
-        if args.webui_url:
+        if args.webui_url and args.use_external_webui:
             check_ping_webui(args.webui_url, args.webui_auth)
         if args.process_title is not None:
             # attach python/ if not specified
