@@ -300,10 +300,11 @@ def main_iterator(args):
         template_path = tuning_config['log_tracker_config_template']
         del tuning_config['log_tracker_config_template']
     list_arguments_name = {}
-    for arguments, values in tuning_config.items():
+    for arguments, values in list(tuning_config.items()):
         if arguments.endswith('_list'):
             list_arguments_name[arguments.replace('_list', '')] = values
-            
+            if arguments in list_arguments_name:
+                del tuning_config[arguments]
     singleton_args = []
     for args in list_arguments_name:
         if len(list_arguments_name[args]) == 1:
