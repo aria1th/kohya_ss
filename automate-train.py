@@ -300,11 +300,10 @@ def main_iterator(args):
         template_path = tuning_config['log_tracker_config_template']
         del tuning_config['log_tracker_config_template']
     list_arguments_name = {}
-    for arguments, values in list(tuning_config.items()):
+    for arguments, values in tuning_config.items():
         if arguments.endswith('_list'):
             list_arguments_name[arguments.replace('_list', '')] = values
-            if arguments in list_arguments_name:
-                del tuning_config[arguments]
+            
     singleton_args = []
     for args in list_arguments_name:
         if len(list_arguments_name[args]) == 1:
@@ -348,8 +347,8 @@ def main_iterator(args):
             print(f"skipping {config_without_log_tracker_config} because it is before index_to_skip")
             continue
         sets_executed_args.add(str(config_without_log_tracker_config))
-        config = generate_config(default_configs=default_configs,**temp_tuning_config,
-                                )
+        config = generate_config(default_configs=default_configs,**temp_tuning_config,)
+        print(f"config : {config}")
         # override args
         config['project_name_base'] = project_name_base if project_name_base != "BASE" else config['project_name_base']
         # check if project_name_base is valid, since it will be used for folder name
