@@ -800,6 +800,7 @@ class BaseDataset(torch.utils.data.Dataset):
         if class_tokens is None:
             input_ids_without_class_tokens = input_ids.clone()
         else:
+            assert class_tokens in caption, f"class_tokens {class_tokens} is not in caption {caption}"
             pre_caption = caption.replace(class_tokens or "", "").strip()
             input_ids_without_class_tokens = tokenizer(
                 pre_caption, padding="max_length", truncation=True, max_length=self.tokenizer_max_length, return_tensors="pt"
