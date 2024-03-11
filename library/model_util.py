@@ -1068,6 +1068,9 @@ def load_models_from_stable_diffusion_checkpoint(v2, ckpt_path, device="cpu", dt
             projection_dim=768,
             torch_dtype="float32",
         )
+        if "text_model.embeddings.position_ids" in converted_text_encoder_checkpoint:
+            print("remove position_ids")
+            del converted_text_encoder_checkpoint["text_model.embeddings.position_ids"] # 77のposition_idsは不要
         text_model = CLIPTextModel._from_config(cfg)
         info = text_model.load_state_dict(converted_text_encoder_checkpoint)
     print("loading text encoder:", info)
