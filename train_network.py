@@ -178,9 +178,14 @@ class NetworkTrainer:
         use_user_config = args.dataset_config is not None
 
         if args.seed is None:
+            print("seed is not specified. generating random seed / seedが指定されていません。ランダムなseedを生成します")
             args.seed = random.randint(0, 2**32)
         set_seed(args.seed)
         hypertile_set_seed(args.seed)
+        # temp set deterministic to True for reproducibility
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        
 
         # tokenizerは単体またはリスト、tokenizersは必ずリスト：既存のコードとの互換性のため
         tokenizer = self.load_tokenizer(args)
@@ -383,7 +388,8 @@ class NetworkTrainer:
         # dataloaderを準備する
         # DataLoaderのプロセス数：0はメインプロセスになる
         n_workers = min(args.max_data_loader_n_workers, os.cpu_count() - 1)  # cpu_count-1 ただし最大で指定された数まで
-
+        # deterministic
+        n_workers = 0
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset_group,
             batch_size=1,
