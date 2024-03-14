@@ -388,15 +388,13 @@ class NetworkTrainer:
         # dataloaderを準備する
         # DataLoaderのプロセス数：0はメインプロセスになる
         n_workers = min(args.max_data_loader_n_workers, os.cpu_count() - 1)  # cpu_count-1 ただし最大で指定された数まで
-        # deterministic
-        n_workers = 0
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset_group,
             batch_size=1,
             shuffle=True,
             collate_fn=collator,
             num_workers=n_workers,
-            persistent_workers=args.persistent_data_loader_workers if n_workers > 0 and args.persistent_data_loader_workers else False,
+            persistent_workers=args.persistent_data_loader_workers,
         )
 
         # 学習ステップ数を計算する
