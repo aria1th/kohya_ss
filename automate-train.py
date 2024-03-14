@@ -296,7 +296,7 @@ def main_iterator(args):
         
     # if log_tracker_config_template is not none, create log tracker config and remove the key
     template_path = None
-    if tuning_config['log_tracker_config_template'] != 'none':
+    if tuning_config.get('log_tracker_config_template', None):
         template_path = tuning_config['log_tracker_config_template']
         del tuning_config['log_tracker_config_template']
     list_arguments_name = {}
