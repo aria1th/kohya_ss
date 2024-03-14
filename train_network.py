@@ -396,7 +396,7 @@ class NetworkTrainer:
             shuffle=True,
             collate_fn=collator,
             num_workers=n_workers,
-            persistent_workers=args.persistent_data_loader_workers,
+            persistent_workers=args.persistent_data_loader_workers if n_workers > 0 and args.persistent_data_loader_workers else False,
         )
 
         # 学習ステップ数を計算する
