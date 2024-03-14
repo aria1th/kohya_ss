@@ -649,7 +649,7 @@ class BaseDataset(torch.utils.data.Dataset):
         debug_dataset: bool,
     ) -> None:
         super().__init__()
-
+        print("WARN : You are using modified version of BaseDataset, which is experimental for PoC. Please check if you're using proper branch.")
         self.tokenizers = tokenizer if isinstance(tokenizer, list) else [tokenizer]
 
         self.max_token_length = max_token_length
@@ -1453,8 +1453,11 @@ class BaseDataset(torch.utils.data.Dataset):
         if self.debug_dataset:
             example["image_keys"] = bucket[image_index : image_index + self.batch_size]
         return example
-
     def get_item_for_caching(self, bucket, bucket_batch_size, image_index):
+        """
+        Overrides BaseDataset.get_item_for_caching
+        Ensures that the batch is provided with at least one regularization image.
+        """
         captions = []
         images = []
         input_ids1_list = []
@@ -1466,11 +1469,22 @@ class BaseDataset(torch.utils.data.Dataset):
         bucket_reso = None
         flip_aug = None
         random_crop = None
-
-        for image_key in bucket[image_index : image_index + bucket_batch_size]:
+        target_image_count = bucket_batch_size
+        found_reg = False
+        found_not_reg = False
+        for image_key in bucket[image_index:] + bucket[:image_index]: # view all images in the bucket
             image_info = self.image_data[image_key]
             subset = self.image_to_subset[image_key]
-
+            subset_type = "reg" if image_info.is_reg else "train"
+            if subset_type == "reg" and found_reg:
+                continue # skip if reg image is already found
+            if subset_type == "reg":
+                found_reg = True
+            else:
+                # skip if reg image is not found yet
+                if not found_reg:
+                    continue
+                found_not_reg = True
             if flip_aug is None:
                 flip_aug = subset.flip_aug
                 random_crop = subset.random_crop
@@ -1506,7 +1520,11 @@ class BaseDataset(torch.utils.data.Dataset):
             input_ids2_without_cls_list.append(input_ids2_without_cls)
             absolute_paths.append(image_info.absolute_path)
             resized_sizes.append(image_info.resized_size)
-
+            if len(captions) == target_image_count:
+                break
+        assert len(captions) == target_image_count, f"not enough images were in the bucket, expected {target_image_count}, got {len(captions)}"
+        assert found_reg, "no regularization image was found in the bucket"
+        assert found_not_reg, "no training image was found in the bucket"
         example = {}
 
         if images[0] is None:
