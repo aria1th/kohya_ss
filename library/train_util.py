@@ -72,6 +72,7 @@ from library.webui_utils import wrap_sample_images_external_webui, check_webui_s
 # from library.hypernetwork import replace_attentions_for_hypernetwork
 from library.original_unet import UNet2DConditionModel
 
+SANITY_CHECK_FLAG = False
 # Tokenizer: checkpointから読み込むのではなくあらかじめ提供されているものを使う
 TOKENIZER_PATH = "openai/clip-vit-large-patch14"
 V2_STABLE_DIFFUSION_PATH = "stabilityai/stable-diffusion-2"  # ここからtokenizerだけ使う v2とv2.1はtokenizer仕様は同じ
@@ -1542,7 +1543,7 @@ class DreamBoothDataset(BaseDataset):
         debug_dataset,
     ) -> None:
         super().__init__(tokenizer, max_token_length, resolution, debug_dataset)
-
+        print("WARN : You are working with experimental DreamBoothDataset. Please be careful. The regularization data will be ensured to be included in batch")
         assert resolution is not None, f"resolution is required / resolution（解像度）指定は必須です"
 
         self.batch_size = batch_size
@@ -1733,8 +1734,345 @@ class DreamBoothDataset(BaseDataset):
                 first_loop = False
 
         self.num_reg_images = num_reg_images
+    def __getitem__(self, index):
+        """
+        Overrides BaseDataset.__getitem__
+        This is for ensuring at least one regularization image is used for each batch.
+        """
+        bucket = self.bucket_manager.buckets[self.buckets_indices[index].bucket_index]
+        bucket_batch_size = self.buckets_indices[index].bucket_batch_size
+        image_index = self.buckets_indices[index].batch_index * bucket_batch_size
 
+        if self.caching_mode is not None:  # return batch for latents/text encoder outputs caching
+            return self.get_item_for_caching(bucket, bucket_batch_size, image_index)
 
+        loss_weights = []
+        captions = []
+        input_ids_list = []
+        input_ids2_list = []
+        input_ids_list_without_cls = []
+        input_ids2_list_without_cls = []
+        latents_list = []
+        images = []
+        original_sizes_hw = []
+        crop_top_lefts = []
+        target_sizes_hw = []
+        flippeds = []  # 変数名が微妙
+        text_encoder_outputs1_list = []
+        text_encoder_outputs2_list = []
+        text_encoder_pool2_list = []
+        cls_tokens_list = []
+        text_encoder_outputs1_without_cls_list = []
+        text_encoder_outputs2_without_cls_list = []
+        text_encoder_pool2_without_cls_list = []
+        mask_images = []
+        image_size_logged = None
+        image_size_base = None
+        for image_key in bucket[image_index : image_index + bucket_batch_size]:
+            image_info:ImageInfo = self.image_data[image_key]
+            cls_tokens_list.append(image_info.class_tokens)
+            subset = self.image_to_subset[image_key]
+            loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
+            mask_images.append(image_info.mask)
+
+            flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
+
+            # image/latentsを処理する
+            if image_info.latents is not None:  # cache_latents=Trueの場合
+                original_size = image_info.latents_original_size
+                crop_ltrb = image_info.latents_crop_ltrb  # calc values later if flipped
+                if not flipped:
+                    latents = image_info.latents
+                else:
+                    latents = image_info.latents_flipped
+
+                image = None
+            elif image_info.latents_npz is not None:  # FineTuningDatasetまたはcache_latents_to_disk=Trueの場合
+                latents, original_size, crop_ltrb, flipped_latents = load_latents_from_disk(image_info.latents_npz)
+                if flipped:
+                    latents = flipped_latents
+                    del flipped_latents
+                latents = torch.FloatTensor(latents)
+                if image_size_logged is None:
+                    # 一度だけログを出す
+                    image_size_logged = latents.shape
+                    image_size_base = image_info.absolute_path
+                else:
+                    assert image_size_logged == latents.shape, f"latents shape mismatch / latentsのサイズが一定でないようです: {image_info.absolute_path}, bucket_reso={image_info.bucket_reso}, \
+                        latents.shape={latents.shape}, previous_latent.shape={image_size_logged}, from {image_size_base}"
+
+                image = None
+            else:
+                path_to_load = image_info.absolute_path
+                if image_info.shift_images:
+                    path_to_load = self.image_shifter.get_variation(path_to_load, image_info.shift_images)
+                # 画像を読み込み、必要ならcropする
+                img, face_cx, face_cy, face_w, face_h = self.load_image_with_face_info(subset, path_to_load)
+                im_h, im_w = img.shape[0:2]
+
+                if self.enable_bucket: # bucketingを有効にしている場合は、画像サイズをbucketに合わせる
+                    img, original_size, crop_ltrb = trim_and_resize_if_required(
+                        subset.random_crop, img, image_info.bucket_reso, image_info.resized_size
+                    )
+                else:
+                    if face_cx > 0:  # 顔位置情報あり Note : it won't work if image didn't have face info as filename_face_cx_cy_w_h.jpg
+                        img = self.crop_target(subset, img, face_cx, face_cy, face_w, face_h)
+                    elif im_h > self.height or im_w > self.width:
+                        assert (
+                            subset.random_crop
+                        ), f"image too large, but cropping and bucketing are disabled / 画像サイズが大きいのでface_crop_aug_rangeかrandom_crop、またはbucketを有効にしてください: {image_info.absolute_path}"
+                        if im_h > self.height:
+                            p = random.randint(0, im_h - self.height)
+                            img = img[p : p + self.height]
+                        if im_w > self.width:
+                            p = random.randint(0, im_w - self.width)
+                            img = img[:, p : p + self.width]
+
+                    im_h, im_w = img.shape[0:2]
+                    assert (
+                        im_h == self.height and im_w == self.width
+                    ), f"image size is small / 画像サイズが小さいようです: {image_info.absolute_path}"
+
+                    original_size = [im_w, im_h]
+                    crop_ltrb = (0, 0, 0, 0)
+
+                # augmentation
+                aug = self.aug_helper.get_augmentor(subset.color_aug)
+                img = aug(image=img)["image"]
+
+                if flipped:
+                    img = img[:, ::-1, :].copy()  # copy to avoid negative stride problem
+
+                latents = None
+                image = self.image_transforms(img)  # -1.0~1.0のtorch.Tensorになる
+
+            images.append(image)
+            latents_list.append(latents)
+
+            target_size = (image.shape[2], image.shape[1]) if image is not None else (latents.shape[2] * 8, latents.shape[1] * 8)
+
+            if not flipped:
+                crop_left_top = (crop_ltrb[0], crop_ltrb[1])
+            else:
+                # crop_ltrb[2] is right, so target_size[0] - crop_ltrb[2] is left in flipped image
+                crop_left_top = (target_size[0] - crop_ltrb[2], crop_ltrb[1])
+
+            original_sizes_hw.append((int(original_size[1]), int(original_size[0])))
+            crop_top_lefts.append((int(crop_left_top[1]), int(crop_left_top[0])))
+            target_sizes_hw.append((int(target_size[1]), int(target_size[0])))
+            flippeds.append(flipped)
+
+            # captionとtext encoder outputを処理する
+            caption = image_info.caption  # default
+            if image_info.text_encoder_outputs1 is not None:
+                text_encoder_outputs1_list.append(image_info.text_encoder_outputs1)
+                text_encoder_outputs2_list.append(image_info.text_encoder_outputs2)
+                text_encoder_pool2_list.append(image_info.text_encoder_pool2)
+                text_encoder_outputs1_without_cls_list.append(image_info.text_encoder_outputs1_without_cls)
+                text_encoder_outputs2_without_cls_list.append(image_info.text_encoder_outputs2_without_cls)
+                text_encoder_pool2_without_cls_list.append(image_info.text_encoder_pool2_without_cls)
+                captions.append(caption)
+            elif image_info.text_encoder_outputs_npz is not None:
+                text_encoder_outputs1, text_encoder_outputs2, text_encoder_pool2, \
+                text_encoder_outputs1_without_cls, text_encoder_outputs2_without_cls, text_encoder_pool2_without_cls = load_text_encoder_outputs_from_disk(
+                    image_info.text_encoder_outputs_npz
+                )
+                text_encoder_outputs1_list.append(text_encoder_outputs1)
+                text_encoder_outputs2_list.append(text_encoder_outputs2)
+                text_encoder_pool2_list.append(text_encoder_pool2)
+                text_encoder_outputs1_without_cls_list.append(text_encoder_outputs1_without_cls)
+                text_encoder_outputs2_without_cls_list.append(text_encoder_outputs2_without_cls)
+                text_encoder_pool2_without_cls_list.append(text_encoder_pool2_without_cls)
+                captions.append(caption)
+            else:
+                caption = self.process_caption(subset, image_info.caption, image_info.class_tokens)
+                if self.XTI_layers:
+                    caption_layer = []
+                    for layer in self.XTI_layers:
+                        token_strings_from = " ".join(self.token_strings)
+                        token_strings_to = " ".join([f"{x}_{layer}" for x in self.token_strings])
+                        caption_ = caption.replace(token_strings_from, token_strings_to)
+                        caption_layer.append(caption_)
+                    captions.append(caption_layer)
+                else:
+                    captions.append(caption)
+
+                if not self.token_padding_disabled:  # this option might be omitted in future
+                    if self.XTI_layers:
+                        token_caption, token_caption_without_cls = self.get_input_ids(caption_layer, self.tokenizers[0])
+                    else:
+                        token_caption, token_caption_without_cls = self.get_input_ids(caption, self.tokenizers[0])
+                    input_ids_list.append(token_caption)
+                    input_ids_list_without_cls.append(token_caption_without_cls)
+
+                    if len(self.tokenizers) > 1:
+                        if self.XTI_layers:
+                            token_caption2, token_caption_without_cls2 = self.get_input_ids(caption_layer, self.tokenizers[1])
+                        else:
+                            token_caption2, token_caption_without_cls2 = self.get_input_ids(caption, self.tokenizers[1])
+                        input_ids2_list.append(token_caption2)
+                        input_ids2_list_without_cls.append(token_caption_without_cls2)
+
+        example = {}
+        example["loss_weights"] = torch.FloatTensor(loss_weights)
+
+        if len(text_encoder_outputs1_list) == 0:
+            if self.token_padding_disabled:
+                # padding=True means pad in the batch
+                captions_copy = captions.copy()
+                # using cls_tokens_list to remove cls tokens from each caption
+                for i, caption in enumerate(captions_copy):
+                    captions_copy[i] = caption.replace(cls_tokens_list[i] or "", "")
+                example["input_ids"] = self.tokenizer[0](captions, padding=True, truncation=True, return_tensors="pt").input_ids
+                example["input_ids_without_cls"] = self.tokenizer[0](
+                    captions_copy, padding=True, truncation=True, return_tensors="pt"
+                ).input_ids
+                
+                if len(self.tokenizers) > 1:
+                    example["input_ids2"] = self.tokenizer[1](
+                        captions, padding=True, truncation=True, return_tensors="pt"
+                    ).input_ids
+                    example["input_ids2_without_cls"] = self.tokenizer[1](
+                        captions_copy, padding=True, truncation=True, return_tensors="pt"
+                    ).input_ids
+                else:
+                    example["input_ids2"] = None
+                    example["input_ids2_without_cls"] = None
+            else:
+                example["input_ids"] = torch.stack(input_ids_list)
+                example["input_ids_without_cls"] = torch.stack(input_ids_list_without_cls) if len(self.tokenizers) > 1 else None
+                example["input_ids2"] = torch.stack(input_ids2_list) if len(self.tokenizers) > 1 else None
+                example["input_ids2_without_cls"] = torch.stack(input_ids2_list_without_cls) if len(self.tokenizers) > 1 else None
+            example["text_encoder_outputs1_list"] = None
+            example["text_encoder_outputs2_list"] = None
+            example["text_encoder_pool2_list"] = None
+            example["text_encoder_outputs1_without_cls_list"] = None
+            example["text_encoder_outputs2_without_cls_list"] = None
+            example["text_encoder_pool2_without_cls_list"] = None
+        else:
+            example["input_ids"] = None
+            example["input_ids2"] = None
+            example["input_ids_without_cls"] = None
+            example["input_ids2_without_cls"] = None
+            # # for assertion
+            # example["input_ids"] = torch.stack([self.get_input_ids(cap, self.tokenizers[0]) for cap in captions])
+            # example["input_ids2"] = torch.stack([self.get_input_ids(cap, self.tokenizers[1]) for cap in captions])
+            example["text_encoder_outputs1_list"] = torch.stack(text_encoder_outputs1_list)
+            example["text_encoder_outputs2_list"] = torch.stack(text_encoder_outputs2_list)
+            example["text_encoder_pool2_list"] = torch.stack(text_encoder_pool2_list)
+            example["text_encoder_outputs1_without_cls_list"] = torch.stack(text_encoder_outputs1_without_cls_list)
+            example["text_encoder_outputs2_without_cls_list"] = torch.stack(text_encoder_outputs2_without_cls_list)
+            example["text_encoder_pool2_without_cls_list"] = torch.stack(text_encoder_pool2_without_cls_list)
+
+        if images[0] is not None:
+            images = torch.stack(images)
+            images = images.to(memory_format=torch.contiguous_format).float()
+        else:
+            images = None
+        example["images"] = images
+        example['mask'] = mask_images
+
+        example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
+        example["captions"] = captions
+        example["captions_without_cls"] = [cap.replace(cls_tokens or "", "") for cap, cls_tokens in zip(captions, cls_tokens_list)]
+
+        example["original_sizes_hw"] = torch.stack([torch.LongTensor(x) for x in original_sizes_hw])
+        example["crop_top_lefts"] = torch.stack([torch.LongTensor(x) for x in crop_top_lefts])
+        example["target_sizes_hw"] = torch.stack([torch.LongTensor(x) for x in target_sizes_hw])
+        example["flippeds"] = flippeds
+
+        if self.debug_dataset:
+            example["image_keys"] = bucket[image_index : image_index + self.batch_size]
+        return example
+    def get_item_for_caching(self, bucket, bucket_batch_size, image_index):
+        """
+        Overrides BaseDataset.get_item_for_caching
+        Ensures that the batch is provided with at least one regularization image.
+        """
+        captions = []
+        images = []
+        input_ids1_list = []
+        input_ids2_list = []
+        input_ids1_without_cls_list = []
+        input_ids2_without_cls_list = []
+        absolute_paths = []
+        resized_sizes = []
+        bucket_reso = None
+        flip_aug = None
+        random_crop = None
+        target_image_count = bucket_batch_size
+        found_reg = False
+        found_not_reg = False
+        for image_key in bucket[image_index:] + bucket[:image_index]: # view all images in the bucket
+            image_info = self.image_data[image_key]
+            subset = self.image_to_subset[image_key]
+            subset_type = "reg" if image_info.is_reg else "train"
+            if subset_type == "reg" and found_reg:
+                continue # skip if reg image is already found
+            if subset_type == "reg":
+                found_reg = True
+            else:
+                # skip if reg image is not found yet
+                if not found_reg:
+                    continue
+                found_not_reg = True
+            if flip_aug is None:
+                flip_aug = subset.flip_aug
+                random_crop = subset.random_crop
+                bucket_reso = image_info.bucket_reso
+            else:
+                assert flip_aug == subset.flip_aug, "flip_aug must be same in a batch"
+                assert random_crop == subset.random_crop, "random_crop must be same in a batch"
+                assert bucket_reso == image_info.bucket_reso, "bucket_reso must be same in a batch"
+
+            caption = image_info.caption  # TODO cache some patterns of dropping, shuffling, etc.
+
+            if self.caching_mode == "latents":
+                image = load_image(image_info.absolute_path)
+            else:
+                image = None
+
+            if self.caching_mode == "text":
+                input_ids1 = self.get_input_ids(caption, self.tokenizers[0])
+                input_ids1_without_cls = self.get_input_ids_without_cls(caption, self.tokenizers[0])
+                input_ids2 = self.get_input_ids(caption, self.tokenizers[1])
+                input_ids2_without_cls = self.get_input_ids_without_cls(caption, self.tokenizers[1])
+            else:
+                input_ids1 = None
+                input_ids2 = None
+                input_ids1_without_cls = None
+                input_ids2_without_cls = None
+
+            captions.append(caption)
+            images.append(image)
+            input_ids1_list.append(input_ids1)
+            input_ids2_list.append(input_ids2)
+            input_ids1_without_cls_list.append(input_ids1_without_cls)
+            input_ids2_without_cls_list.append(input_ids2_without_cls)
+            absolute_paths.append(image_info.absolute_path)
+            resized_sizes.append(image_info.resized_size)
+            if len(captions) == target_image_count:
+                break
+        assert len(captions) == target_image_count, f"not enough images were in the bucket, expected {target_image_count}, got {len(captions)}"
+        assert found_reg, "no regularization image was found in the bucket"
+        assert found_not_reg, "no training image was found in the bucket"
+        example = {}
+
+        if images[0] is None:
+            images = None
+        example["images"] = images
+
+        example["captions"] = captions
+        example["input_ids1_list"] = input_ids1_list
+        example["input_ids2_list"] = input_ids2_list
+        example["input_ids_without_cls"] = input_ids1_without_cls_list
+        example["input_ids2_without_cls"] = input_ids2_without_cls_list
+        example["absolute_paths"] = absolute_paths
+        example["resized_sizes"] = resized_sizes
+        example["flip_aug"] = flip_aug
+        example["random_crop"] = random_crop
+        example["bucket_reso"] = bucket_reso
+        return example
 class FineTuningDataset(BaseDataset):
     def __init__(
         self,
