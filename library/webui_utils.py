@@ -566,6 +566,7 @@ def request_sample(
             controlnet_units=controlnet_units,
             **prompt
         )
+        webui_instance.resume_agent_scheduler()
         # start thread to wait for result
         def wait_and_save(queued_task_result:QueuedTaskResult, output_dir_path, output_name, accelerator, orig_prompt, negative_prompt, seed):
             while not queued_task_result.is_finished(): # can throw exception if webui is not reachable or broken
